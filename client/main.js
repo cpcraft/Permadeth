@@ -14,12 +14,31 @@ const state = {
   lastDir: { x: 0, y: 0 },
   keys: new Set(),
   hoverPlayer: null,
-  duel: null // {duelId, hp:{}, turn, lastAction}
+  duel: null,          // {duelId, hp:{}, turn, lastAction}
+  pendingInvite: null
 };
 
-// Layers
+// World + layers
 const world = new PIXI.Container();
 app.stage.addChild(world);
+
+// subtle grid background (helps orientation)
+const grid = new PIXI.Graphics();
+world.addChild(grid);
+function drawGrid() {
+  grid.clear();
+  const step = 200;
+  const size = 8000; // draw a chunk around the camera
+  grid.alpha = 0.15;
+  grid.stroke({ width: 1 });
+  for (let x = -size; x <= size; x += step) {
+    grid.moveTo(x, -size).lineTo(x, size);
+  }
+  for (let y = -size; y <= size; y += step) {
+    grid.moveTo(-size, y).lineTo(size, y);
+  }
+}
+drawGrid();
 
 // UI hooks
 const joinEl = document.getElementById('join');
@@ -57,6 +76,7 @@ function connect() {
         youEl.textContent = `You: ${state.me}`;
         joinEl.classList.add('hidden');
         hudEl.classList.remove('hidden');
+        centerCameraNow();
         break;
 
       case 'WORLD_SNAPSHOT':
@@ -65,6 +85,7 @@ function connect() {
         d.players.forEach(p => state.players.set(p.id, p));
         d.loot.forEach(l => state.loot.set(l.id, l));
         rebuildSprites();
+        centerCameraNow();
         break;
 
       case 'PLAYER_JOINED':
@@ -83,11 +104,12 @@ function connect() {
         });
         break;
 
-      case 'PLAYER_LEFT':
+      case 'PLAYER_LEFT': {
         state.players.delete(d.id);
         const g = state.sprites.get(d.id);
         if (g) { world.removeChild(g); state.sprites.delete(d.id); }
         break;
+      }
 
       case 'CHAT':
         logChat(`${d.from.name}: ${d.msg}`);
@@ -105,8 +127,7 @@ function connect() {
         break;
 
       case 'DUEL_INVITE':
-        logChat(`[Duel] Invitation from ${d.fromPlayerId}. Press F when close to accept, or click their circle & press F.`);
-        // store temp? For simplicity, we accept when F on that player id; below we’ll send DUEL_ACCEPT with d.duelId when you press F on inviter
+        logChat(`[Duel] Invitation from ${d.fromPlayerId}. Hover them & press F to accept.`);
         state.pendingInvite = d; // {fromPlayerId, duelId}
         break;
 
@@ -141,7 +162,7 @@ function connect() {
 }
 
 function rebuildSprites() {
-  // Clear
+  // Clear all
   for (const s of state.sprites.values()) world.removeChild(s);
   state.sprites.clear();
   for (const s of state.lootSprites.values()) world.removeChild(s);
@@ -157,7 +178,7 @@ function ensurePlayerSprite(p) {
   if (state.sprites.has(p.id)) return;
   const g = new PIXI.Graphics();
   g.x = p.x; g.y = p.y;
-  g.circle(0, 0, 16).fill(p.color || '#2dd4bf');
+  g.circle(0, 0, 16).fill(p.color || '#2dd4bf').stroke({ width: 2, color: 0x000000, alpha: 0.4 });
   g.eventMode = 'static';
   g.cursor = 'pointer';
   g.on('pointerover', () => { state.hoverPlayer = p.id; });
@@ -170,7 +191,7 @@ function ensureLootSprite(l) {
   if (state.lootSprites.has(l.id)) return;
   const g = new PIXI.Graphics();
   g.x = l.x; g.y = l.y;
-  g.rect(-8, -8, 16, 16).fill('#ffe08a');
+  g.rect(-10, -10, 20, 20).fill('#ffe08a').stroke({ width: 2, color: 0x000000, alpha: 0.25 });
   world.addChild(g);
   state.lootSprites.set(l.id, g);
 }
@@ -197,13 +218,11 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.key.toLowerCase() === 'f') {
-    // If invite exists & it’s from hovered player: accept
     if (state.pendingInvite && state.hoverPlayer === state.pendingInvite.fromPlayerId) {
       send('DUEL_ACCEPT', { duelId: state.pendingInvite.duelId });
       state.pendingInvite = null;
       return;
     }
-    // Else request duel with hovered player
     if (state.hoverPlayer && state.hoverPlayer !== state.me) {
       send('DUEL_REQUEST', { targetId: state.hoverPlayer });
     }
@@ -212,6 +231,7 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('keyup', (e) => state.keys.delete(e.key.toLowerCase()));
 
+// movement throttle to server
 setInterval(() => {
   const dir = { x: 0, y: 0 };
   if (state.keys.has('w')) dir.y -= 1;
@@ -250,3 +270,22 @@ function renderDuel() {
     <div>Actions: [1] Strike [2] Block [3] Heal</div>
   `;
 }
+
+/* ---------- CAMERA FOLLOW ---------- */
+function centerCameraNow() {
+  const me = state.me && state.players.get(state.me);
+  if (!me) return;
+  world.x = (app.renderer.width / 2) - me.x;
+  world.y = (app.renderer.height / 2) - me.y;
+}
+
+// update camera every frame
+app.ticker.add(() => {
+  centerCameraNow();
+});
+
+// keep grid roughly centered chunk
+window.addEventListener('resize', () => {
+  drawGrid();
+  centerCameraNow();
+});
