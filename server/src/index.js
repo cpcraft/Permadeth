@@ -11,19 +11,25 @@ import {
   genItemUid, dist, CONSTANTS
 } from './game.js';
 
+import { fileURLToPath } from 'url';
+import path from 'path';
+import fs from 'fs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 async function main() {
   await initSchema();
 
   const app = express();
-  app.use(helmet({
-    contentSecurityPolicy: false
-  }));
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(express.json());
 
-  // Serve the client
-  app.use(express.static(new URL('../../client', import.meta.url).pathname));
+  // Serve client folder cross‑platform and fallback to index.html
+  const clientDir = path.resolve(__dirname, '../../client');
+  console.log('Serving static from:', clientDir, 'exists:', fs.existsSync(path.join(clientDir, 'index.html')));
+  app.use(express.static(clientDir));
+  app.get('*', (_req, res) => res.sendFile(path.join(clientDir, 'index.html')));
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
@@ -31,7 +37,7 @@ async function main() {
   const state = new GameState();
   state.spawnInitialLoot(400);
 
-  // Broadcast helpers
+  // helpers
   function broadcast(type, d) {
     const msg = JSON.stringify({ t: type, d });
     for (const pid of state.players.keys()) {
@@ -45,15 +51,14 @@ async function main() {
     p.ws.send(JSON.stringify({ t: type, d }));
   }
 
-  // Physics / world tick
+  // physics tick
   setInterval(() => {
     state.tick(CONSTANTS.TICK_MS / 1000);
-    // lightweight movement diffs
     const payload = Array.from(state.players.values()).map(p => ({ id: p.id, x: p.x, y: p.y }));
     broadcast('PLAYER_MOVES', payload);
   }, CONSTANTS.TICK_MS);
 
-  // Websocket connections
+  // ws
   wss.on('connection', (ws) => {
     const rl = makeRateLimiter();
 
@@ -62,14 +67,10 @@ async function main() {
         ws.close(1009, 'Message too large');
         return;
       }
-      if (!rl.take(1)) return; // drop silently
+      if (!rl.take(1)) return;
 
       let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
       const { op, d } = msg || {};
       if (!ALLOWED_OPS.has(op)) return;
 
@@ -99,7 +100,6 @@ async function main() {
             ws.send(JSON.stringify({ t: 'WELCOME', d: { id, constants: CONSTANTS } }));
             ws.send(JSON.stringify({ t: 'WORLD_SNAPSHOT', d: state.listSnapshot() }));
             broadcast('PLAYER_JOINED', { id, name, color, x: player.x, y: player.y });
-
             break;
           }
 
@@ -133,7 +133,6 @@ async function main() {
               break;
             }
 
-            // Generate item instance + save to DB
             const uid = genItemUid(pid);
             await pool.query('INSERT INTO items (uid, base_type, found_by) VALUES ($1,$2,$3)', [uid, loot.base_type, pid]);
             await pool.query('INSERT INTO inventories (player_id, item_uid) VALUES ($1,$2)', [pid, uid]);
@@ -152,9 +151,6 @@ async function main() {
             const target = state.players.get(targetId);
             if (me.duelId || target.duelId) { sendTo(pid, 'ERROR', { message: 'Already in duel' }); break; }
 
-            // proximity check optional; uncomment to require closeness
-            // if (dist(me, target) > 200) { sendTo(pid,'ERROR',{message:'Too far to duel'}); break; }
-
             const duel = new Duel(pid, targetId);
             state.duels.set(duel.id, duel);
             sendTo(targetId, 'DUEL_INVITE', { fromPlayerId: pid, duelId: duel.id });
@@ -168,13 +164,11 @@ async function main() {
             if (!duel || duel.state !== 'pending') break;
             if (duel.p2 !== pid) break;
 
-            // lock movement
             const p1 = state.players.get(duel.p1);
             const p2 = state.players.get(duel.p2);
             p1.duelId = duel.id; p1.dir = { x: 0, y: 0 };
             p2.duelId = duel.id; p2.dir = { x: 0, y: 0 };
 
-            // coin flip for first turn
             const first = Math.random() < 0.5 ? duel.p1 : duel.p2;
             duel.start(first);
 
@@ -218,13 +212,11 @@ async function main() {
               const w = duel.winner();
               sendTo(duel.p1, 'DUEL_END', { duelId: duel.id, winner: w });
               sendTo(duel.p2, 'DUEL_END', { duelId: duel.id, winner: w });
-              // unlock players
               const p1 = state.players.get(duel.p1);
               const p2 = state.players.get(duel.p2);
               if (p1) p1.duelId = null;
               if (p2) p2.duelId = null;
             }
-
             break;
           }
 
