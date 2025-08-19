@@ -1,165 +1,37 @@
-import 'dotenv/config';
-import express from 'express';
-import helmet from 'helmet';
-import http from 'http';
-import { WebSocketServer } from 'ws';
-import { v4 as uuidv4 } from 'uuid';
-import { pool, initSchema } from './db.js';
-import { Duel } from './duel.js';
-import {
-  GameState, ALLOWED_OPS, MAX_MSG_BYTES, makeRateLimiter,
-  genItemUid, dist, CONSTANTS
-} from './game.js';
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Permadeth</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="ui">
+      <div id="join">
+        <input id="name" maxlength="16" placeholder="Name" />
+        <input id="color" value="#2dd4bf" />
+        <button id="btnJoin">Join</button>
+      </div>
+      <div id="hud" class="hidden">
+        <div class="row">
+          <span id="you"></span>
+          <span> | WASD to move • Click player + F to duel • 1/2/3 = strike/block/heal</span>
+        </div>
+        <div id="duel" class="hidden"></div>
+      </div>
+      <div id="chat">
+        <div id="log"></div>
+        <input id="chatInput" placeholder="Enter to send..." />
+      </div>
+    </div>
+    <canvas id="game"></canvas>
 
-import { fileURLToPath } from 'url';
-import path from 'path';
-import fs from 'fs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = parseInt(process.env.PORT || '3000', 10);
-
-async function main() {
-  await initSchema();
-
-  const app = express();
-  app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(express.json());
-
-  // Serve client folder cross‑platform and fallback to index.html
-  const clientDir = path.resolve(__dirname, '../../client');
-  console.log('Serving static from:', clientDir, 'exists:', fs.existsSync(path.join(clientDir, 'index.html')));
-  app.use(express.static(clientDir));
-  app.get('*', (_req, res) => res.sendFile(path.join(clientDir, 'index.html')));
-
-  const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws' });
-
-  const state = new GameState();
-  state.spawnInitialLoot(400);
-
-  // helpers
-  function broadcast(type, d) {
-    const msg = JSON.stringify({ t: type, d });
-    for (const pid of state.players.keys()) {
-      const p = state.players.get(pid);
-      if (p?.ws && p.ws.readyState === 1) p.ws.send(msg);
-    }
-  }
-  function sendTo(pid, type, d) {
-    const p = state.players.get(pid);
-    if (!p?.ws || p.ws.readyState !== 1) return;
-    p.ws.send(JSON.stringify({ t: type, d }));
-  }
-
-  // physics tick
-  setInterval(() => {
-    state.tick(CONSTANTS.TICK_MS / 1000);
-    const payload = Array.from(state.players.values()).map(p => ({ id: p.id, x: p.x, y: p.y }));
-    broadcast('PLAYER_MOVES', payload);
-  }, CONSTANTS.TICK_MS);
-
-  // ws
-  wss.on('connection', (ws) => {
-    const rl = makeRateLimiter();
-
-    ws.on('message', async (raw) => {
-      if (typeof raw === 'string' ? raw.length > MAX_MSG_BYTES : raw.byteLength > MAX_MSG_BYTES) {
-        ws.close(1009, 'Message too large');
-        return;
-      }
-      if (!rl.take(1)) return;
-
-      let msg;
-      try { msg = JSON.parse(raw.toString()); } catch { return; }
-      const { op, d } = msg || {};
-      if (!ALLOWED_OPS.has(op)) return;
-
-      try {
-        switch (op) {
-          case 'JOIN': {
-            const name = String(d?.name || '').slice(0, 16).trim();
-            const color = String(d?.color || '#00aaff').slice(0, 16);
-            if (!name) { ws.send(JSON.stringify({ t: 'ERROR', d: { message: 'Name required' } })); return; }
-
-            const id = uuidv4();
-            await pool.query(
-              'INSERT INTO players (id,name,color) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
-              [id, name, color]
-            );
-
-            const player = {
-              id, name, color,
-              x: (Math.random() * 2 - 1) * 500,
-              y: (Math.random() * 2 - 1) * 500,
-              dir: { x: 0, y: 0 },
-              ws, duelId: null
-            };
-            state.addPlayer(player);
-            state.addSocket(ws, id);
-
-            ws.send(JSON.stringify({ t: 'WELCOME', d: { id, constants: CONSTANTS } }));
-            ws.send(JSON.stringify({ t: 'WORLD_SNAPSHOT', d: state.listSnapshot() }));
-            broadcast('PLAYER_JOINED', { id, name, color, x: player.x, y: player.y });
-            break;
-          }
-
-          case 'MOVE_DIR': {
-            const pid = state.sockets.get(ws);
-            if (!pid) break;
-            const dx = Number(d?.dx || 0), dy = Number(d?.dy || 0);
-            state.setMoveDir(pid, dx, dy);
-            break;
-          }
-
-          case 'CHAT_SEND': {
-            const pid = state.sockets.get(ws);
-            if (!pid) break;
-            const p = state.players.get(pid);
-            const text = String(d?.msg || '').trim().slice(0, 256);
-            if (!text) break;
-            broadcast('CHAT', { from: { id: p.id, name: p.name, color: p.color }, msg: text });
-            break;
-          }
-
-          case 'LOOT_PICK': {
-            const pid = state.sockets.get(ws);
-            if (!pid) break;
-            const p = state.players.get(pid);
-            const lootId = String(d?.id || '');
-            const loot = state.loot.get(lootId);
-            if (!loot) break;
-            if (dist(p, loot) > CONSTANTS.PICK_RADIUS) {
-              sendTo(pid, 'ERROR', { message: 'Too far from loot' });
-              break;
-            }
-
-            const uid = genItemUid(pid);
-            await pool.query('INSERT INTO items (uid, base_type, found_by) VALUES ($1,$2,$3)', [uid, loot.base_type, pid]);
-            await pool.query('INSERT INTO inventories (player_id, item_uid) VALUES ($1,$2)', [pid, uid]);
-
-            state.loot.delete(lootId);
-            broadcast('LOOT_REMOVE', { id: lootId });
-            sendTo(pid, 'INV_ADD', { item: { uid, base_type: loot.base_type } });
-            break;
-          }
-
-          case 'DUEL_REQUEST': {
-            const pid = state.sockets.get(ws);
-            const targetId = String(d?.targetId || '');
-            if (!pid || !state.players.has(targetId)) break;
-            const me = state.players.get(pid);
-            const target = state.players.get(targetId);
-            if (me.duelId || target.duelId) { sendTo(pid, 'ERROR', { message: 'Already in duel' }); break; }
-
-            const duel = new Duel(pid, targetId);
-            state.duels.set(duel.id, duel);
-            sendTo(targetId, 'DUEL_INVITE', { fromPlayerId: pid, duelId: duel.id });
-            break;
-          }
-
-          case 'DUEL_ACCEPT': {
-            const pid = state.sockets.get(ws);
-            const duelId = String(d?.duelId || '');
-            const duel = state.duels.get(duelId);
-            if (!duel || duel.state !== 'pending') break;
-            if (due
+    <!-- Pixi v8 via ESM -->
+    <script type="module">
+      import * as PIXI from 'https://unpkg.com/pixi.js@8.x/dist/pixi.mjs';
+      window.PIXI = PIXI;
+    </script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

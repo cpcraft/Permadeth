@@ -22,14 +22,31 @@ async function main() {
   await initSchema();
 
   const app = express();
-  app.use(helmet({ contentSecurityPolicy: false }));
+
+  // Disable COOP / Origin-Agent-Cluster on HTTP to avoid Chrome warnings in dev
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    originAgentCluster: false
+  }));
   app.use(express.json());
 
-  // Serve client folder cross‑platform and fallback to index.html
   const clientDir = path.resolve(__dirname, '../../client');
-  console.log('Serving static from:', clientDir, 'exists:', fs.existsSync(path.join(clientDir, 'index.html')));
+  const indexPath = path.join(clientDir, 'index.html');
+  console.log('[static] clientDir =', clientDir);
+  console.log('[static] index.html exists =', fs.existsSync(indexPath));
+
   app.use(express.static(clientDir));
-  app.get('*', (_req, res) => res.sendFile(path.join(clientDir, 'index.html')));
+  app.get('*', (_req, res) => {
+    if (!fs.existsSync(indexPath)) {
+      res.status(500).send(
+        `client/index.html not found at:\n${indexPath}\n\nExpected layout:\nPermadeth/\n  client/index.html\n  server/src/index.js`
+      );
+      return;
+    }
+    res.sendFile(indexPath);
+  });
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
@@ -37,28 +54,25 @@ async function main() {
   const state = new GameState();
   state.spawnInitialLoot(400);
 
-  // helpers
-  function broadcast(type, d) {
+  const broadcast = (type, d) => {
     const msg = JSON.stringify({ t: type, d });
     for (const pid of state.players.keys()) {
       const p = state.players.get(pid);
       if (p?.ws && p.ws.readyState === 1) p.ws.send(msg);
     }
-  }
-  function sendTo(pid, type, d) {
+  };
+  const sendTo = (pid, type, d) => {
     const p = state.players.get(pid);
     if (!p?.ws || p.ws.readyState !== 1) return;
     p.ws.send(JSON.stringify({ t: type, d }));
-  }
+  };
 
-  // physics tick
   setInterval(() => {
     state.tick(CONSTANTS.TICK_MS / 1000);
     const payload = Array.from(state.players.values()).map(p => ({ id: p.id, x: p.x, y: p.y }));
     broadcast('PLAYER_MOVES', payload);
   }, CONSTANTS.TICK_MS);
 
-  // ws
   wss.on('connection', (ws) => {
     const rl = makeRateLimiter();
 
@@ -106,8 +120,7 @@ async function main() {
           case 'MOVE_DIR': {
             const pid = state.sockets.get(ws);
             if (!pid) break;
-            const dx = Number(d?.dx || 0), dy = Number(d?.dy || 0);
-            state.setMoveDir(pid, dx, dy);
+            state.setMoveDir(pid, Number(d?.dx || 0), Number(d?.dy || 0));
             break;
           }
 
