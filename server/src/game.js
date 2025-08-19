@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 
 export const ALLOWED_OPS = new Set([
-  // Duel ops removed
-  'JOIN', 'MOVE_DIR', 'CHAT_SEND', 'LOOT_PICK', 'PING'
+  // Duel system removed; engagement only needs leave
+  'JOIN', 'MOVE_DIR', 'CHAT_SEND', 'LOOT_PICK', 'ENGAGE_LEAVE', 'PING'
 ]);
 
 export const MAX_MSG_BYTES = 2048;
@@ -20,7 +20,7 @@ const PICK_RADIUS = 48;
 
 export class GameState {
   constructor() {
-    this.players = new Map(); // playerId -> {id,name,color,x,y,dir:{x,y},ws}
+    this.players = new Map(); // playerId -> {id,name,color,x,y,dir:{x,y},ws,engageWith:null}
     this.sockets = new Map(); // ws -> playerId
     this.loot = new Map();    // lootId -> {id,x,y,base_type}
   }
@@ -40,6 +40,7 @@ export class GameState {
   }
 
   addPlayer(player) {
+    player.engageWith = null;
     this.players.set(player.id, player);
   }
 
@@ -62,7 +63,7 @@ export class GameState {
   listSnapshot() {
     return {
       players: Array.from(this.players.values()).map(p => ({
-        id: p.id, name: p.name, color: p.color, x: p.x, y: p.y
+        id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, engageWith: p.engageWith
       })),
       loot: Array.from(this.loot.values())
     };
@@ -121,5 +122,6 @@ export const CONSTANTS = {
   TILE_SIZE,
   WORLD_SIZE,
   LOOT_RADIUS,
-  PICK_RADIUS
+  PICK_RADIUS,
+  TOUCH_RADIUS: 32,  // 16px circles => touch at 32px
 };

@@ -115,10 +115,34 @@ async function main() {
     p.ws.send(JSON.stringify({ t: type, d }));
   };
 
-  // physics tick
+  // physics + engagement detection
   setInterval(() => {
     state.tick(CONSTANTS.TICK_MS / 1000);
-    const payload = Array.from(state.players.values()).map(p => ({ id: p.id, x: p.x, y: p.y }));
+
+    // --- detect new touches (naive O(n^2) for now) ---
+    const touched = [];
+    const arr = Array.from(state.players.values());
+    for (let i = 0; i < arr.length; i++) {
+      const a = arr[i];
+      for (let j = i + 1; j < arr.length; j++) {
+        const b = arr[j];
+        if (a.engageWith || b.engageWith) continue;
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d <= CONSTANTS.TOUCH_RADIUS) {
+          a.engageWith = b.id;
+          b.engageWith = a.id;
+          touched.push([a.id, b.id]);
+        }
+      }
+    }
+    for (const [p1, p2] of touched) {
+      sendTo(p1, 'ENGAGE_START', { with: p2 });
+      sendTo(p2, 'ENGAGE_START', { with: p1 });
+      broadcast('ENGAGE_FLAGS', { pairs: [[p1, p2]] }); // tell others to show "fighting"
+    }
+
+    // movement broadcast
+    const payload = arr.map(p => ({ id: p.id, x: p.x, y: p.y }));
     broadcast('PLAYER_MOVES', payload);
   }, CONSTANTS.TICK_MS);
 
@@ -160,14 +184,15 @@ async function main() {
               x: Math.random() * size,
               y: Math.random() * size,
               dir: { x: 0, y: 0 },
-              ws
+              ws,
+              engageWith: null
             };
             state.addPlayer(player);
             state.addSocket(ws, id);
 
             ws.send(JSON.stringify({ t: 'WELCOME', d: { id, constants: CONSTANTS } }));
             ws.send(JSON.stringify({ t: 'WORLD_SNAPSHOT', d: state.listSnapshot() }));
-            broadcast('PLAYER_JOINED', { id, name, color, x: player.x, y: player.y });
+            broadcast('PLAYER_JOINED', { id, name, color, x: player.x, y: player.y, engageWith: null });
             break;
           }
 
@@ -176,6 +201,21 @@ async function main() {
             if (!pid) break;
             const dx = Number(d?.dx || 0), dy = Number(d?.dy || 0);
             state.setMoveDir(pid, dx, dy);
+            break;
+          }
+
+          case 'ENGAGE_LEAVE': {
+            const pid = state.sockets.get(ws);
+            if (!pid) break;
+            const me = state.players.get(pid);
+            const otherId = me?.engageWith;
+            if (!otherId) break;
+            const other = state.players.get(otherId);
+            if (other) other.engageWith = null;
+            me.engageWith = null;
+            sendTo(pid, 'ENGAGE_END', { with: otherId });
+            if (other) sendTo(other.id, 'ENGAGE_END', { with: pid });
+            broadcast('ENGAGE_FLAGS_CLEAR', { ids: [pid, otherId].filter(Boolean) });
             break;
           }
 
@@ -224,8 +264,17 @@ async function main() {
     ws.on('close', () => {
       const pid = state.sockets.get(ws);
       if (!pid) return;
-      state.removeSocket(ws);
       const p = state.players.get(pid);
+      // clear engagement if any
+      if (p?.engageWith) {
+        const other = state.players.get(p.engageWith);
+        if (other) {
+          other.engageWith = null;
+          sendTo(other.id, 'ENGAGE_END', { with: pid });
+        }
+        broadcast('ENGAGE_FLAGS_CLEAR', { ids: [pid, p?.engageWith].filter(Boolean) });
+      }
+      state.removeSocket(ws);
       if (p) {
         state.removePlayer(pid);
         broadcast('PLAYER_LEFT', { id: pid });

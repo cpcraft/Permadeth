@@ -27,13 +27,23 @@
         </div>
       </div>
 
-      <!-- (Minimal HUD removed since duels are scrapped) -->
+      <!-- Top-right players list -->
+      <div id="playersList" class="hidden"></div>
 
       <!-- Chat + Coords -->
       <div id="chat">
         <div id="coords"></div>
         <div id="log"></div>
         <input id="chatInput" placeholder="Enter to send..." />
+      </div>
+
+      <!-- Lightweight duel overlay -->
+      <div id="engageModal" class="overlay hidden">
+        <div class="overlayBody">
+          <div class="overlayTitle">Duel</div>
+          <div class="overlayText">You touched another player. This is just a screen — no mechanics yet.</div>
+          <button id="btnLeave">Leave</button>
+        </div>
       </div>
     </div>
 

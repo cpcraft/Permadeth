@@ -29,7 +29,16 @@ html, body {
 
 .panel { display: grid; gap: 10px; }
 .panel input, .panel button { padding: 10px 12px; border-radius: 10px; border: none; }
-.hidden { display: none; }
+.hidden { display: none !important; }
+
+/* ---------- TOP-RIGHT PLAYER LIST ---------- */
+#playersList {
+  position: absolute; top: 12px; right: 12px; width: 240px;
+  pointer-events: auto;
+  background: rgba(0,0,0,0.35); border-radius: 10px; padding: 8px 10px;
+  font-family: monospace; font-size: 12px; line-height: 1.5;
+  max-height: 45vh; overflow: auto;
+}
 
 /* ---------- CHAT & COORDS ---------- */
 #chat { position: absolute; left: 16px; right: 16px; bottom: 16px; pointer-events: auto; }
@@ -47,3 +56,34 @@ html, body {
 }
 
 #chatInput { width: 100%; padding: 8px 10px; border-radius: 8px; border: none; }
+
+/* ---------- ENGAGEMENT OVERLAY (2/4 of screen) ---------- */
+.overlay {
+  position: absolute; inset: 0; pointer-events: auto;
+  display: grid; place-items: center;
+  background: rgba(0,0,0,0.35);
+}
+.overlayBody {
+  width: 50vw; height: 50vh; /* 2/4 of screen */
+  max-width: 720px; max-height: 480px;
+  background: rgba(2,6,23,0.95);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px; padding: 18px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  display: grid; gap: 12px;
+}
+.overlayTitle { font-size: 18px; font-weight: 700; }
+.overlayText { opacity: 0.9; }
+.overlayBody button {
+  justify-self: start;
+  padding: 8px 12px; border-radius: 10px; border: none; cursor: pointer;
+}
+
+/* tiny tag above engaged players */
+.fightTag {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: rgba(255, 80, 80, 0.85);
+  color: #fff; padding: 2px 6px; border-radius: 6px;
+  font-size: 11px; font-family: monospace;
+}

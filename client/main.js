@@ -6,19 +6,20 @@ await app.init({ canvas, resizeTo: window, antialias: true, backgroundAlpha: 0 }
 const state = {
   me: null,
   constants: null,
-  players: new Map(), // id -> {id,name,color,x,y}
-  loot: new Map(),    // id -> {id,x,y,base_type}
-  sprites: new Map(), // id -> {g, visX, visY}
+  players: new Map(), // id -> {id,name,color,x,y,engageWith}
+  loot: new Map(),
+  sprites: new Map(), // id -> {g, visX, visY, tagEl?}
   lootSprites: new Map(),
   ws: null,
-  moveTarget: null // {x,y}
+  moveTarget: null, // {x,y}
+  engaged: false,   // whether I am in overlay
 };
 
 // World + layers
 const world = new PIXI.Container();
 app.stage.addChild(world);
 
-// subtle 64px grid; redraw around camera
+// 64px grid around camera (camera is NOT smoothed)
 const grid = new PIXI.Graphics();
 world.addChild(grid);
 const GRID_STEP = 64;
@@ -28,7 +29,7 @@ function drawGridAround(cx, cy) {
   lastGridCenter = { x: cx, y: cy };
 
   grid.clear();
-  grid.alpha = 0.12; // barely visible
+  grid.alpha = 0.12;
   grid.stroke({ width: 1 });
 
   const viewW = app.renderer.width;
@@ -53,7 +54,6 @@ app.stage.on('pointerdown', (e) => {
   const target = { x: global.x - world.x, y: global.y - world.y };
   state.moveTarget = target;
 });
-
 function stopMovement() {
   state.moveTarget = null;
   send('MOVE_DIR', { dx: 0, dy: 0 });
@@ -63,6 +63,9 @@ function stopMovement() {
 const chatLog = document.getElementById('log');
 const chatInput = document.getElementById('chatInput');
 const coordsEl = document.getElementById('coords');
+const playersList = document.getElementById('playersList');
+const engageModal = document.getElementById('engageModal');
+const btnLeave = document.getElementById('btnLeave');
 
 const authEl = document.getElementById('auth');
 const tabLogin = document.getElementById('tabLogin');
@@ -130,8 +133,13 @@ btnLogin.onclick = async () => {
   if (e.key === 'Enter') btnRegister.click();
 }));
 
-// Note: no auto-login; spawn only after joining.
+btnLeave.onclick = () => {
+  send('ENGAGE_LEAVE', {});
+};
 
+// Note: no auto-login.
+
+// WS
 function connect() {
   if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return;
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
@@ -149,7 +157,8 @@ function connect() {
       case 'WELCOME':
         state.me = d.id;
         state.constants = d.constants;
-        authEl.classList.add('hidden'); // hide modal only when connected
+        authEl.classList.add('hidden');
+        playersList.classList.remove('hidden');
         centerCameraNow();
         break;
 
@@ -159,12 +168,15 @@ function connect() {
         d.players.forEach(p => state.players.set(p.id, p));
         d.loot.forEach(l => state.loot.set(l.id, l));
         rebuildSprites();
+        rebuildFightTags();
+        updatePlayersList();
         centerCameraNow();
         break;
 
       case 'PLAYER_JOINED': {
         state.players.set(d.id, d);
         ensurePlayerSprite(d);
+        updatePlayersList();
         break;
       }
 
@@ -176,9 +188,58 @@ function connect() {
         break;
 
       case 'PLAYER_LEFT': {
-        state.players.delete(d.id);
         const s = state.sprites.get(d.id);
-        if (s) { world.removeChild(s.g); state.sprites.delete(d.id); }
+        if (s?.tagEl) s.tagEl.remove();
+        state.sprites.delete(d.id);
+        state.players.delete(d.id);
+        updatePlayersList();
+        break;
+      }
+
+      case 'ENGAGE_START': {
+        // me engaged?
+        if (d.with && state.me) {
+          const me = state.players.get(state.me);
+          if (me) me.engageWith = d.with;
+          const other = state.players.get(d.with);
+          if (other) other.engageWith = state.me;
+          if (state.me && (state.me === me.id)) {
+            state.engaged = true;
+            engageModal.classList.remove('hidden');
+          }
+          rebuildFightTags();
+        }
+        break;
+      }
+
+      case 'ENGAGE_FLAGS': {
+        // show "fighting" above both players (for everyone)
+        for (const [a, b] of d.pairs || []) {
+          const pa = state.players.get(a), pb = state.players.get(b);
+          if (pa) pa.engageWith = b;
+          if (pb) pb.engageWith = a;
+        }
+        rebuildFightTags();
+        break;
+      }
+
+      case 'ENGAGE_END': {
+        const me = state.players.get(state.me);
+        if (me) me.engageWith = null;
+        const other = state.players.get(d.with);
+        if (other) other.engageWith = null;
+        state.engaged = false;
+        engageModal.classList.add('hidden');
+        rebuildFightTags();
+        break;
+      }
+
+      case 'ENGAGE_FLAGS_CLEAR': {
+        for (const id of d.ids || []) {
+          const p = state.players.get(id);
+          if (p) p.engageWith = null;
+        }
+        rebuildFightTags();
         break;
       }
 
@@ -207,27 +268,26 @@ function connect() {
   ws.onclose = () => logChat('[WS] closed');
 }
 
+// Sprites
 function rebuildSprites() {
-  for (const s of state.sprites.values()) world.removeChild(s.g);
+  for (const s of state.sprites.values()) {
+    if (s.tagEl) s.tagEl.remove();
+    world.removeChild(s.g);
+  }
   state.sprites.clear();
-  for (const s of state.lootSprites.values()) world.removeChild(s);
-  state.lootSprites.clear();
-
   for (const p of state.players.values()) ensurePlayerSprite(p);
   for (const l of state.loot.values()) ensureLootSprite(l);
 }
-
 function ensurePlayerSprite(p) {
   if (state.sprites.has(p.id)) return;
   const g = new PIXI.Graphics();
   g.circle(0, 0, 16).fill(p.color || '#2dd4bf').stroke({ width: 2, color: 0x000000, alpha: 0.4 });
   g.x = p.x; g.y = p.y;
 
-  // store smoothed visual position
-  state.sprites.set(p.id, { g, visX: p.x, visY: p.y });
+  const entry = { g, visX: p.x, visY: p.y, tagEl: null };
+  state.sprites.set(p.id, entry);
   world.addChild(g);
 }
-
 function ensureLootSprite(l) {
   if (state.lootSprites.has(l.id)) return;
   const g = new PIXI.Graphics();
@@ -237,17 +297,51 @@ function ensureLootSprite(l) {
   state.lootSprites.set(l.id, g);
 }
 
-function send(op, d = {}) {
-  if (state.ws && state.ws.readyState === 1) {
-    state.ws.send(JSON.stringify({ op, d }));
+// DOM fight tags
+function rebuildFightTags() {
+  for (const s of state.sprites.values()) {
+    if (s.tagEl) { s.tagEl.remove(); s.tagEl = null; }
+  }
+  for (const p of state.players.values()) {
+    if (!p.engageWith) continue;
+    const s = state.sprites.get(p.id);
+    if (!s) continue;
+    const tag = document.createElement('div');
+    tag.className = 'fightTag';
+    tag.textContent = 'fighting';
+    document.body.appendChild(tag);
+    s.tagEl = tag;
+    // position will be updated every frame in ticker
   }
 }
 
-/* ---------------- MOVEMENT: CLICK TO MOVE ---------------- */
+// Player list (top-right)
+function updatePlayersList() {
+  const tileSize = state.constants?.TILE_SIZE || 64;
+  const rows = [];
+  for (const p of state.players.values()) {
+    const tx = Math.floor(p.x / tileSize);
+    const ty = Math.floor(p.y / tileSize);
+    rows.push(`${p.name}  ${tx}:${ty}`);
+  }
+  rows.sort();
+  playersList.textContent = rows.join('\n');
+}
+
+// Chat
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const text = chatInput.value.trim();
+    if (text) send('CHAT_SEND', { msg: text });
+    chatInput.value = '';
+    chatInput.blur();
+  }
+});
+
+// Movement control
 setInterval(() => {
   const me = state.me && state.players.get(state.me);
   if (!me) return;
-
   if (!state.moveTarget) return;
 
   const dx = state.moveTarget.x - me.x;
@@ -261,43 +355,33 @@ setInterval(() => {
   send('MOVE_DIR', { dx: ndx, dy: ndy });
 }, 50);
 
-// Chat
-chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const text = chatInput.value.trim();
-    if (text) send('CHAT_SEND', { msg: text });
-    chatInput.value = '';
-    chatInput.blur();
+// Send helpers
+function send(op, d = {}) {
+  if (state.ws && state.ws.readyState === 1) {
+    state.ws.send(JSON.stringify({ op, d }));
   }
-});
+}
 
-/* ---------- CAMERA + COORDS + SMOOTHING ---------- */
+/* ---------- CAMERA (NOT smoothed) + COORDS + SPRITE SMOOTHING ---------- */
 function centerCameraNow() {
   const me = state.me && state.players.get(state.me);
   if (!me) return;
+  // Camera follows server position exactly (no smoothing)
   world.x = (app.renderer.width / 2) - me.x;
   world.y = (app.renderer.height / 2) - me.y;
   drawGridAround(me.x, me.y);
   updateCoords(me);
+  updatePlayersList();
 }
 
-function updateCoords(me) {
-  if (!state.constants || !me) return;
-  const tileSize = state.constants.TILE_SIZE || 64;
-  const tx = Math.floor(me.x / tileSize);
-  const ty = Math.floor(me.y / tileSize);
-  coordsEl.textContent = `x:${tx}  y:${ty}`;
-}
-
-// Lerp each sprite towards its server position every frame for smoothness
+// lerp sprites to server positions each frame; position fight tags and keep camera fixed to server position
 let lastMs = performance.now();
 app.ticker.add(() => {
   const now = performance.now();
   const dt = Math.max(0.001, (now - lastMs) / 1000);
   lastMs = now;
 
-  // smoothing factor: higher = snappier; lower = smoother
-  const alpha = 1 - Math.exp(-10 * dt); // ~100ms time-constant
+  const alpha = 1 - Math.exp(-10 * dt); // smooth factor
 
   for (const [id, p] of state.players) {
     const s = state.sprites.get(id);
@@ -306,9 +390,17 @@ app.ticker.add(() => {
     s.visY += (p.y - s.visY) * alpha;
     s.g.x = s.visX;
     s.g.y = s.visY;
+
+    if (s.tagEl) {
+      // convert world->screen
+      const sx = s.visX + world.x;
+      const sy = s.visY + world.y - 24;
+      s.tagEl.style.left = `${sx}px`;
+      s.tagEl.style.top = `${sy}px`;
+    }
   }
 
-  centerCameraNow();
+  centerCameraNow(); // camera uses raw positions, not smoothed
 });
 
 window.addEventListener('resize', () => centerCameraNow());
