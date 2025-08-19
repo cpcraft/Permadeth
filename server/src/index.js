@@ -52,27 +52,25 @@ async function main() {
       }
       if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
 
+      // Pre-check to give a nicer error before relying on the unique index
+      const check = await pool.query('SELECT 1 FROM players WHERE lower(name)=lower($1) LIMIT 1', [username]);
+      if (check.rowCount) return res.status(409).json({ error: 'Username already taken' });
+
       const id = uuidv4();
       const hash = await bcrypt.hash(password, 10);
       const color = '#2dd4bf';
 
-      // name acts as the unique username
       await pool.query(
         'INSERT INTO players (id, name, color, password_hash) VALUES ($1,$2,$3,$4)',
         [id, username, color, hash]
-      ).catch((e) => {
-        if (e.code === '23505') throw new Error('Username already taken');
-        throw e;
-      });
+      );
 
       const token = uuidv4();
       await pool.query('INSERT INTO sessions (token, player_id) VALUES ($1,$2)', [token, id]);
 
       res.json({ token, player: { id, username, color } });
     } catch (e) {
-      const msg = e.message || 'Registration failed';
-      const code = msg.includes('taken') ? 409 : 500;
-      res.status(code).json({ error: msg });
+      res.status(500).json({ error: e.message || 'Registration failed' });
     }
   });
 
@@ -82,7 +80,11 @@ async function main() {
       const password = String(req.body?.password || '');
       if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
-      const { rows } = await pool.query('SELECT id, name, color, password_hash FROM players WHERE name=$1', [username]);
+      // case-insensitive username lookup
+      const { rows } = await pool.query(
+        'SELECT id, name, color, password_hash FROM players WHERE lower(name)=lower($1)',
+        [username]
+      );
       if (!rows.length || !rows[0].password_hash) return res.status(401).json({ error: 'Invalid username or password' });
 
       const ok = await bcrypt.compare(password, rows[0].password_hash);
@@ -140,7 +142,7 @@ async function main() {
       try {
         switch (op) {
           case 'JOIN': {
-            // JOIN now expects a session token
+            // JOIN expects a session token
             const token = String(d?.token || '');
             if (!token) { ws.send(JSON.stringify({ t: 'ERROR', d: { message: 'Missing token' } })); return; }
 
