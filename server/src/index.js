@@ -52,7 +52,6 @@ async function main() {
       }
       if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
 
-      // Pre-check to give a nicer error before relying on the unique index
       const check = await pool.query('SELECT 1 FROM players WHERE lower(name)=lower($1) LIMIT 1', [username]);
       if (check.rowCount) return res.status(409).json({ error: 'Username already taken' });
 
@@ -80,7 +79,6 @@ async function main() {
       const password = String(req.body?.password || '');
       if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
-      // case-insensitive username lookup
       const { rows } = await pool.query(
         'SELECT id, name, color, password_hash FROM players WHERE lower(name)=lower($1)',
         [username]
@@ -142,7 +140,6 @@ async function main() {
       try {
         switch (op) {
           case 'JOIN': {
-            // JOIN expects a session token
             const token = String(d?.token || '');
             if (!token) { ws.send(JSON.stringify({ t: 'ERROR', d: { message: 'Missing token' } })); return; }
 
@@ -257,7 +254,7 @@ async function main() {
             const duel = state.duels.get(duelId);
             if (!duel || duel.state !== 'active') break;
             if (duel.turn !== pid) { sendTo(pid, 'ERROR', { message: 'Not your turn' }); break; }
-            if (!['strike', 'block', 'heal'].includes(act)) { sendTo(pid, 'ERROR', { message: 'Invalid action' }); break; }
+            if (!['strike', 'block', 'heal', 'flee'].includes(act)) { sendTo(pid, 'ERROR', { message: 'Invalid action' }); break; }
 
             const result = duel.action(pid, act);
             if (result.error) { sendTo(pid, 'ERROR', { message: result.error }); break; }

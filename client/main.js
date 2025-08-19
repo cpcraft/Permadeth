@@ -11,35 +11,33 @@ const state = {
   sprites: new Map(), // id -> {g,label}
   lootSprites: new Map(),
   ws: null,
-  lastDir: { x: 0, y: 0 },
-  keys: new Set(),
   hoverPlayer: null,
   duel: null,
   pendingInvite: null,
-  showTiles: false
+  showTiles: false,
+  moveTarget: null // {x,y}
 };
 
 // World + layers
 const world = new PIXI.Container();
 app.stage.addChild(world);
 
-// dynamic grid around camera
+// subtle tile grid (64px); redraws around camera
 const grid = new PIXI.Graphics();
 world.addChild(grid);
-const GRID_STEP = 64; // tile size
+const GRID_STEP = 64;
 let lastGridCenter = { x: -99999, y: -99999 };
 function drawGridAround(cx, cy) {
-  // redraw only if camera moved > half tile
   if (Math.hypot(cx - lastGridCenter.x, cy - lastGridCenter.y) < GRID_STEP / 2) return;
   lastGridCenter = { x: cx, y: cy };
 
   grid.clear();
-  grid.alpha = 0.15;
+  grid.alpha = 0.12; // barely visible
   grid.stroke({ width: 1 });
 
   const viewW = app.renderer.width;
   const viewH = app.renderer.height;
-  const pad = GRID_STEP * 10;
+  const pad = GRID_STEP * 8;
   const x0 = Math.floor((cx - viewW/2 - pad) / GRID_STEP) * GRID_STEP;
   const x1 = Math.ceil((cx + viewW/2 + pad) / GRID_STEP) * GRID_STEP;
   const y0 = Math.floor((cy - viewH/2 - pad) / GRID_STEP) * GRID_STEP;
@@ -47,6 +45,24 @@ function drawGridAround(cx, cy) {
 
   for (let x = x0; x <= x1; x += GRID_STEP) grid.moveTo(x, y0).lineTo(x, y1);
   for (let y = y0; y <= y1; y += GRID_STEP) grid.moveTo(x0, y).lineTo(x1, y);
+}
+
+// make stage clickable for point-to-move
+app.stage.eventMode = 'static';
+app.stage.hitArea = app.screen;
+app.stage.cursor = 'crosshair';
+app.stage.on('pointerdown', (e) => {
+  if (!state.me || !state.players.get(state.me)) return;
+  const global = e.global; // screen coords
+  // world only translates (no scale/rotate), so convert simply:
+  const target = { x: global.x - world.x, y: global.y - world.y };
+  state.moveTarget = target;
+  // movement starts at next tick
+});
+
+function stopMovement() {
+  state.moveTarget = null;
+  send('MOVE_DIR', { dx: 0, dy: 0 });
 }
 
 // UI hooks
@@ -57,7 +73,6 @@ const chatLog = document.getElementById('log');
 const chatInput = document.getElementById('chatInput');
 const btnCoords = document.getElementById('btnCoords');
 
-// auth elements
 const authEl = document.getElementById('auth');
 const tabLogin = document.getElementById('tabLogin');
 const tabRegister = document.getElementById('tabRegister');
@@ -80,6 +95,13 @@ tabRegister.onclick = () => {
   registerView.classList.remove('hidden'); loginView.classList.add('hidden');
 };
 
+function logChat(msg) {
+  const p = document.createElement('div');
+  p.textContent = msg;
+  chatLog.appendChild(p);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 btnRegister.onclick = async () => {
   try {
     if (regPass.value !== regPass2.value) return logChat('[Auth] Passwords do not match');
@@ -91,6 +113,7 @@ btnRegister.onclick = async () => {
     if (!r.ok) return logChat('[Auth] ' + (data.error || 'Registration failed'));
     localStorage.setItem('pd_token', data.token);
     logChat('[Auth] Registration OK. Connecting...');
+    authEl.classList.add('hidden'); // hide panel immediately
     connect();
   } catch (e) { logChat('[Auth] Registration error'); }
 };
@@ -105,23 +128,25 @@ btnLogin.onclick = async () => {
     if (!r.ok) return logChat('[Auth] ' + (data.error || 'Login failed'));
     localStorage.setItem('pd_token', data.token);
     logChat('[Auth] Login OK. Connecting...');
+    authEl.classList.add('hidden'); // hide panel immediately
     connect();
   } catch (e) { logChat('[Auth] Login error'); }
 };
+
+// Enter should submit the active panel
+[loginUser, loginPass].forEach(el => el.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') btnLogin.click();
+}));
+[regUser, regPass, regPass2].forEach(el => el.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') btnRegister.click();
+}));
 
 // auto-login if token exists
 const existingToken = localStorage.getItem('pd_token');
 if (existingToken) connect();
 
-function logChat(msg) {
-  const p = document.createElement('div');
-  p.textContent = msg;
-  chatLog.appendChild(p);
-  chatLog.scrollTop = chatLog.scrollHeight;
-}
-
 function connect() {
-  if (state.ws && state.ws.readyState === 1) return;
+  if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return; // connecting/connected
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
   const ws = new WebSocket(url);
   state.ws = ws;
@@ -138,7 +163,6 @@ function connect() {
         state.me = d.id;
         state.constants = d.constants;
         youEl.textContent = `You: ${state.me}`;
-        authEl.classList.add('hidden');
         hudEl.classList.remove('hidden');
         centerCameraNow();
         break;
@@ -152,10 +176,11 @@ function connect() {
         centerCameraNow();
         break;
 
-      case 'PLAYER_JOINED':
+      case 'PLAYER_JOINED': {
         state.players.set(d.id, d);
         ensurePlayerSprite(d);
         break;
+      }
 
       case 'PLAYER_MOVES':
         d.forEach(({ id, x, y }) => {
@@ -211,7 +236,7 @@ function connect() {
 
       case 'DUEL_END':
         if (state.duel && state.duel.duelId === d.duelId) {
-          const win = d.winner === state.me ? 'You won!' : (d.winner ? `${d.winner} won` : 'Ended');
+          const win = d.winner === state.me ? 'You won!' : (d.winner ? `${d.winner} won` : 'Duel ended');
           logChat(`[Duel] ${win}`);
           state.duel = null;
           duelEl.classList.add('hidden');
@@ -223,18 +248,23 @@ function connect() {
         break;
     }
   };
+
+  ws.onerror = (e) => {
+    logChat('[WS] error — check server is running on :3000');
+    console.error(e);
+  };
+  ws.onclose = () => {
+    logChat('[WS] closed');
+  };
 }
 
 function rebuildSprites() {
-  // Clear all
   for (const s of state.sprites.values()) { world.removeChild(s.g); world.removeChild(s.label); }
   state.sprites.clear();
   for (const s of state.lootSprites.values()) world.removeChild(s);
   state.lootSprites.clear();
 
-  // Players
   for (const p of state.players.values()) ensurePlayerSprite(p);
-  // Loot
   for (const l of state.loot.values()) ensureLootSprite(l);
 }
 
@@ -273,50 +303,38 @@ function send(op, d = {}) {
   }
 }
 
-// Movement & input
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && document.activeElement !== chatInput) {
-    chatInput.focus();
+/* ---------------- MOVEMENT: CLICK TO MOVE ---------------- */
+setInterval(() => {
+  const me = state.me && state.players.get(state.me);
+  if (!me) return;
+
+  if (!state.moveTarget) return;
+
+  const dx = state.moveTarget.x - me.x;
+  const dy = state.moveTarget.y - me.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist < 8) {
+    // close enough; stop
+    stopMovement();
     return;
   }
-  state.keys.add(e.key.toLowerCase());
 
-  // Duel actions
-  if (state.duel) {
-    if (e.key === '1') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'strike' });
-    if (e.key === '2') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'block' });
-    if (e.key === '3') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'heal' });
-  }
-
-  if (e.key.toLowerCase() === 'f') {
-    if (state.pendingInvite && state.hoverPlayer === state.pendingInvite.fromPlayerId) {
-      send('DUEL_ACCEPT', { duelId: state.pendingInvite.duelId });
-      state.pendingInvite = null;
-      return;
-    }
-    if (state.hoverPlayer && state.hoverPlayer !== state.me) {
-      send('DUEL_REQUEST', { targetId: state.hoverPlayer });
-    }
-  }
-});
-
-window.addEventListener('keyup', (e) => state.keys.delete(e.key.toLowerCase()));
-
-// movement throttle to server
-setInterval(() => {
-  const dir = { x: 0, y: 0 };
-  if (state.keys.has('w')) dir.y -= 1;
-  if (state.keys.has('s')) dir.y += 1;
-  if (state.keys.has('a')) dir.x -= 1;
-  if (state.keys.has('d')) dir.x += 1;
-
-  if (dir.x !== state.lastDir.x || dir.y !== state.lastDir.y) {
-    state.lastDir = dir;
-    send('MOVE_DIR', dir);
-  }
+  const ndx = dx / dist;
+  const ndy = dy / dist;
+  send('MOVE_DIR', { dx: ndx, dy: ndy });
 }, 50);
 
-// Chat
+// Duel hotkeys (strike/block/heal/run)
+window.addEventListener('keydown', (e) => {
+  if (!state.duel) return;
+  if (e.key === '1') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'strike' });
+  if (e.key === '2') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'block' });
+  if (e.key === '3') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'heal' });
+  if (e.key.toLowerCase() === 'r') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'flee' });
+});
+
+// Clicking chat should not send movement
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const text = chatInput.value.trim();
@@ -333,7 +351,7 @@ btnCoords.onclick = () => {
   updateAllLabels();
 };
 
-/* ---------- CAMERA FOLLOW ---------- */
+/* ---------- CAMERA ---------- */
 function centerCameraNow() {
   const me = state.me && state.players.get(state.me);
   if (!me) return;
@@ -355,7 +373,6 @@ function updateAllLabels() {
   }
 }
 
-// update camera every frame
 app.ticker.add(() => {
   centerCameraNow();
 });
