@@ -152,13 +152,17 @@ async function main() {
 
             const { id, name, color } = rows[0];
 
+            // ---- SPAWN: Random inside top-left 10x10 tiles ----
+            const tiles = 10;
+            const size = CONSTANTS.TILE_SIZE * tiles; // 10 tiles worth of pixels
             const player = {
               id, name, color,
-              x: Math.random() * CONSTANTS.WORLD_SIZE,
-              y: Math.random() * CONSTANTS.WORLD_SIZE,
+              x: Math.random() * size,
+              y: Math.random() * size,
               dir: { x: 0, y: 0 },
               ws, duelId: null
             };
+
             state.addPlayer(player);
             state.addSocket(ws, id);
 

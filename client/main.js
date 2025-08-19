@@ -8,13 +8,12 @@ const state = {
   constants: null,
   players: new Map(), // id -> {id,name,color,x,y}
   loot: new Map(),    // id -> {id,x,y,base_type}
-  sprites: new Map(), // id -> {g,label}
+  sprites: new Map(), // id -> PIXI.Graphics
   lootSprites: new Map(),
   ws: null,
   hoverPlayer: null,
   duel: null,
   pendingInvite: null,
-  showTiles: false,
   moveTarget: null // {x,y}
 };
 
@@ -53,11 +52,9 @@ app.stage.hitArea = app.screen;
 app.stage.cursor = 'crosshair';
 app.stage.on('pointerdown', (e) => {
   if (!state.me || !state.players.get(state.me)) return;
-  const global = e.global; // screen coords
-  // world only translates (no scale/rotate), so convert simply:
+  const global = e.global;
   const target = { x: global.x - world.x, y: global.y - world.y };
   state.moveTarget = target;
-  // movement starts at next tick
 });
 
 function stopMovement() {
@@ -67,11 +64,10 @@ function stopMovement() {
 
 // UI hooks
 const hudEl = document.getElementById('hud');
-const youEl = document.getElementById('you');
 const duelEl = document.getElementById('duel');
 const chatLog = document.getElementById('log');
 const chatInput = document.getElementById('chatInput');
-const btnCoords = document.getElementById('btnCoords');
+const coordsEl = document.getElementById('coords');
 
 const authEl = document.getElementById('auth');
 const tabLogin = document.getElementById('tabLogin');
@@ -113,7 +109,6 @@ btnRegister.onclick = async () => {
     if (!r.ok) return logChat('[Auth] ' + (data.error || 'Registration failed'));
     localStorage.setItem('pd_token', data.token);
     logChat('[Auth] Registration OK. Connecting...');
-    authEl.classList.add('hidden'); // hide panel immediately
     connect();
   } catch (e) { logChat('[Auth] Registration error'); }
 };
@@ -128,12 +123,11 @@ btnLogin.onclick = async () => {
     if (!r.ok) return logChat('[Auth] ' + (data.error || 'Login failed'));
     localStorage.setItem('pd_token', data.token);
     logChat('[Auth] Login OK. Connecting...');
-    authEl.classList.add('hidden'); // hide panel immediately
     connect();
   } catch (e) { logChat('[Auth] Login error'); }
 };
 
-// Enter should submit the active panel
+// Enter submits
 [loginUser, loginPass].forEach(el => el.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') btnLogin.click();
 }));
@@ -141,12 +135,10 @@ btnLogin.onclick = async () => {
   if (e.key === 'Enter') btnRegister.click();
 }));
 
-// auto-login if token exists
-const existingToken = localStorage.getItem('pd_token');
-if (existingToken) connect();
+// NOTE: auto-login removed. Player is not spawned until user authenticates.
 
 function connect() {
-  if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return; // connecting/connected
+  if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return;
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
   const ws = new WebSocket(url);
   state.ws = ws;
@@ -162,8 +154,8 @@ function connect() {
       case 'WELCOME':
         state.me = d.id;
         state.constants = d.constants;
-        youEl.textContent = `You: ${state.me}`;
-        hudEl.classList.remove('hidden');
+        authEl.classList.add('hidden');     // hide modal only after connected
+        hudEl.classList.remove('hidden');   // show minimal HUD
         centerCameraNow();
         break;
 
@@ -187,8 +179,8 @@ function connect() {
           const p = state.players.get(id);
           if (p) {
             p.x = x; p.y = y;
-            const s = state.sprites.get(id);
-            if (s) { s.g.x = x; s.g.y = y; s.label.x = x; s.label.y = y - 26; }
+            const g = state.sprites.get(id);
+            if (g) { g.x = x; g.y = y; }
           }
         });
         break;
@@ -196,7 +188,7 @@ function connect() {
       case 'PLAYER_LEFT': {
         state.players.delete(d.id);
         const s = state.sprites.get(d.id);
-        if (s) { world.removeChild(s.g); world.removeChild(s.label); state.sprites.delete(d.id); }
+        if (s) { world.removeChild(s); state.sprites.delete(d.id); }
         break;
       }
 
@@ -249,17 +241,12 @@ function connect() {
     }
   };
 
-  ws.onerror = (e) => {
-    logChat('[WS] error — check server is running on :3000');
-    console.error(e);
-  };
-  ws.onclose = () => {
-    logChat('[WS] closed');
-  };
+  ws.onerror = () => logChat('[WS] error — check server is running on :3000');
+  ws.onclose = () => logChat('[WS] closed');
 }
 
 function rebuildSprites() {
-  for (const s of state.sprites.values()) { world.removeChild(s.g); world.removeChild(s.label); }
+  for (const s of state.sprites.values()) world.removeChild(s);
   state.sprites.clear();
   for (const s of state.lootSprites.values()) world.removeChild(s);
   state.lootSprites.clear();
@@ -278,14 +265,7 @@ function ensurePlayerSprite(p) {
   g.on('pointerover', () => { state.hoverPlayer = p.id; });
   g.on('pointerout', () => { if (state.hoverPlayer === p.id) state.hoverPlayer = null; });
   world.addChild(g);
-
-  const label = new PIXI.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 12, fill: 0xffffff, align: 'center' } });
-  label.x = p.x; label.y = p.y - 26;
-  label.anchor.set(0.5);
-  label.visible = state.showTiles;
-  world.addChild(label);
-
-  state.sprites.set(p.id, { g, label });
+  state.sprites.set(p.id, g);
 }
 
 function ensureLootSprite(l) {
@@ -314,11 +294,7 @@ setInterval(() => {
   const dy = state.moveTarget.y - me.y;
   const dist = Math.hypot(dx, dy);
 
-  if (dist < 8) {
-    // close enough; stop
-    stopMovement();
-    return;
-  }
+  if (dist < 8) { stopMovement(); return; }
 
   const ndx = dx / dist;
   const ndy = dy / dist;
@@ -334,7 +310,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() === 'r') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'flee' });
 });
 
-// Clicking chat should not send movement
+// Chat
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const text = chatInput.value.trim();
@@ -344,39 +320,26 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 
-// tiles/coords toggle
-btnCoords.onclick = () => {
-  state.showTiles = !state.showTiles;
-  for (const s of state.sprites.values()) s.label.visible = state.showTiles;
-  updateAllLabels();
-};
-
-/* ---------- CAMERA ---------- */
+/* ---------- CAMERA + COORDS ---------- */
 function centerCameraNow() {
   const me = state.me && state.players.get(state.me);
   if (!me) return;
   world.x = (app.renderer.width / 2) - me.x;
   world.y = (app.renderer.height / 2) - me.y;
   drawGridAround(me.x, me.y);
-  if (state.showTiles) updateAllLabels();
+  updateCoords(me);
 }
 
-function updateAllLabels() {
-  if (!state.constants) return;
+function updateCoords(me) {
+  if (!state.constants || !me) return;
   const tileSize = state.constants.TILE_SIZE || 64;
-  for (const p of state.players.values()) {
-    const s = state.sprites.get(p.id);
-    if (!s) continue;
-    const tx = Math.floor(p.x / tileSize);
-    const ty = Math.floor(p.y / tileSize);
-    s.label.text = `${tx};${ty}`;
-  }
+  const tx = Math.floor(me.x / tileSize);
+  const ty = Math.floor(me.y / tileSize);
+  coordsEl.textContent = `x:${tx}  y:${ty}`;
 }
 
 app.ticker.add(() => {
   centerCameraNow();
 });
 
-window.addEventListener('resize', () => {
-  centerCameraNow();
-});
+window.addEventListener('resize', () => centerCameraNow());

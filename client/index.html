@@ -8,9 +8,9 @@
   </head>
   <body>
     <div id="ui">
-      <!-- Auth -->
-      <div id="auth">
-        <div id="authTabs">
+      <!-- Centered Auth Modal -->
+      <div id="auth" class="modal">
+        <div id="authTabs" class="tabs">
           <button id="tabLogin" class="tab active">Log in</button>
           <button id="tabRegister" class="tab">Register</button>
         </div>
@@ -27,18 +27,17 @@
         </div>
       </div>
 
-      <!-- HUD -->
+      <!-- Minimal HUD -->
       <div id="hud" class="hidden">
         <div class="row">
-          <span id="you"></span>
-          <span> | WASD to move • Click player + F to duel • 1/2/3 = strike/block/heal</span>
-          <button id="btnCoords" class="pill">Toggle tiles</button>
+          <span>F to duel • 1/2/3</span>
         </div>
         <div id="duel" class="hidden"></div>
       </div>
 
-      <!-- Chat -->
+      <!-- Chat + Coords -->
       <div id="chat">
+        <div id="coords"></div>
         <div id="log"></div>
         <input id="chatInput" placeholder="Enter to send..." />
       </div>

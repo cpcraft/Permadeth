@@ -11,17 +11,24 @@ html, body {
 /* UI overlay */
 #ui { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
 
-/* ---------- AUTH ---------- */
-#auth {
-  position: absolute; top: 16px; left: 16px; pointer-events: auto;
-  background: rgba(0,0,0,0.35); border-radius: 12px; padding: 10px;
-  display: inline-block; min-width: 280px;
+/* ---------- CENTERED AUTH MODAL ---------- */
+.modal {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  background: rgba(2, 6, 23, 0.9);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px; padding: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  width: min(420px, 90vw);
 }
-#authTabs { display: flex; gap: 6px; margin-bottom: 8px; }
-.tab { padding: 6px 10px; border-radius: 8px; border: none; cursor: pointer; }
-.tab.active { background: rgba(255,255,255,0.15); }
-.panel { display: grid; gap: 8px; }
-.panel input, .panel button { padding: 8px 10px; border-radius: 8px; border: none; }
+
+.tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+.tab { padding: 8px 12px; border-radius: 10px; border: none; cursor: pointer; }
+.tab.active { background: rgba(255,255,255,0.12); }
+
+.panel { display: grid; gap: 10px; }
+.panel input, .panel button { padding: 10px 12px; border-radius: 10px; border: none; }
 .hidden { display: none; }
 
 /* ---------- HUD ---------- */
@@ -30,17 +37,24 @@ html, body {
   background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px;
   display: inline-flex; gap: 10px; align-items: center;
 }
-.pill { padding: 4px 10px; border-radius: 999px; border: none; cursor: pointer; }
 
 #duel { margin-top: 8px; background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px; }
 
-/* ---------- CHAT ---------- */
+/* ---------- CHAT & COORDS ---------- */
 #chat { position: absolute; left: 16px; right: 16px; bottom: 16px; pointer-events: auto; }
+
+#coords {
+  margin: 0 0 6px 0;
+  font-family: monospace; font-size: 13px;
+  opacity: 0.8;
+}
+
 #log {
   height: 160px; overflow-y: auto;
   background: rgba(0,0,0,0.35); border-radius: 10px;
   padding: 8px; margin-bottom: 8px;
 }
+
 #chatInput { width: 100%; padding: 8px 10px; border-radius: 8px; border: none; }
 
-.badge { padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); margin-right: 6px; }
+/* Player labels removed; grid is subtle inside canvas draw */
