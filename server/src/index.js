@@ -7,7 +7,6 @@ import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 
 import { pool, initSchema } from './db.js';
-import { Duel } from './duel.js';
 import {
   GameState, ALLOWED_OPS, MAX_MSG_BYTES, makeRateLimiter,
   genItemUid, dist, CONSTANTS
@@ -103,19 +102,20 @@ async function main() {
   const state = new GameState();
   state.spawnInitialLoot(400);
 
-  function broadcast(type, d) {
+  const broadcast = (type, d) => {
     const msg = JSON.stringify({ t: type, d });
     for (const pid of state.players.keys()) {
       const p = state.players.get(pid);
       if (p?.ws && p.ws.readyState === 1) p.ws.send(msg);
     }
-  }
-  function sendTo(pid, type, d) {
+  };
+  const sendTo = (pid, type, d) => {
     const p = state.players.get(pid);
     if (!p?.ws || p.ws.readyState !== 1) return;
     p.ws.send(JSON.stringify({ t: type, d }));
-  }
+  };
 
+  // physics tick
   setInterval(() => {
     state.tick(CONSTANTS.TICK_MS / 1000);
     const payload = Array.from(state.players.values()).map(p => ({ id: p.id, x: p.x, y: p.y }));
@@ -152,17 +152,16 @@ async function main() {
 
             const { id, name, color } = rows[0];
 
-            // ---- SPAWN: Random inside top-left 10x10 tiles ----
+            // Spawn inside top-left 10x10 tiles
             const tiles = 10;
-            const size = CONSTANTS.TILE_SIZE * tiles; // 10 tiles worth of pixels
+            const size = CONSTANTS.TILE_SIZE * tiles;
             const player = {
               id, name, color,
               x: Math.random() * size,
               y: Math.random() * size,
               dir: { x: 0, y: 0 },
-              ws, duelId: null
+              ws
             };
-
             state.addPlayer(player);
             state.addSocket(ws, id);
 
@@ -209,83 +208,6 @@ async function main() {
             state.loot.delete(lootId);
             broadcast('LOOT_REMOVE', { id: lootId });
             sendTo(pid, 'INV_ADD', { item: { uid, base_type: loot.base_type } });
-            break;
-          }
-
-          case 'DUEL_REQUEST': {
-            const pid = state.sockets.get(ws);
-            const targetId = String(d?.targetId || '');
-            if (!pid || !state.players.has(targetId)) break;
-            const me = state.players.get(pid);
-            const target = state.players.get(targetId);
-            if (me.duelId || target.duelId) { sendTo(pid, 'ERROR', { message: 'Already in duel' }); break; }
-
-            const duel = new Duel(pid, targetId);
-            state.duels.set(duel.id, duel);
-            sendTo(targetId, 'DUEL_INVITE', { fromPlayerId: pid, duelId: duel.id });
-            break;
-          }
-
-          case 'DUEL_ACCEPT': {
-            const pid = state.sockets.get(ws);
-            const duelId = String(d?.duelId || '');
-            const duel = state.duels.get(duelId);
-            if (!duel || duel.state !== 'pending') break;
-            if (duel.p2 !== pid) break;
-
-            const p1 = state.players.get(duel.p1);
-            const p2 = state.players.get(duel.p2);
-            p1.duelId = duel.id; p1.dir = { x: 0, y: 0 };
-            p2.duelId = duel.id; p2.dir = { x: 0, y: 0 };
-
-            const first = Math.random() < 0.5 ? duel.p1 : duel.p2;
-            duel.start(first);
-
-            await pool.query(
-              'INSERT INTO duels (id,p1,p2,state,turn_player) VALUES ($1,$2,$3,$4,$5)',
-              [duel.id, duel.p1, duel.p2, 'active', duel.turn]
-            );
-
-            sendTo(duel.p1, 'DUEL_START', { duelId: duel.id, p1: duel.p1, p2: duel.p2, turn: duel.turn, hp: duel.hp });
-            sendTo(duel.p2, 'DUEL_START', { duelId: duel.id, p1: duel.p1, p2: duel.p2, turn: duel.turn, hp: duel.hp });
-            break;
-          }
-
-          case 'DUEL_ACTION': {
-            const pid = state.sockets.get(ws);
-            const duelId = String(d?.duelId || '');
-            const act = String(d?.action || '');
-            const duel = state.duels.get(duelId);
-            if (!duel || duel.state !== 'active') break;
-            if (duel.turn !== pid) { sendTo(pid, 'ERROR', { message: 'Not your turn' }); break; }
-            if (!['strike', 'block', 'heal', 'flee'].includes(act)) { sendTo(pid, 'ERROR', { message: 'Invalid action' }); break; }
-
-            const result = duel.action(pid, act);
-            if (result.error) { sendTo(pid, 'ERROR', { message: result.error }); break; }
-
-            await pool.query(
-              'INSERT INTO turns (duel_id, turn_no, actor, action) VALUES ($1,$2,$3,$4)',
-              [duel.id, duel.turnNo, pid, JSON.stringify({ act, result })]
-            );
-
-            await pool.query(
-              'UPDATE duels SET turn_player=$2, p1_hp=$3, p2_hp=$4, state=$5, winner=$6, ended_at=CASE WHEN $5 = \'ended\' THEN now() ELSE ended_at END WHERE id=$1',
-              [duel.id, duel.turn, duel.hp[duel.p1], duel.hp[duel.p2], duel.state, duel.winner() || null]
-            );
-
-            const payload = { duelId: duel.id, hp: duel.hp, turn: duel.turn, lastAction: { actor: pid, act, result } };
-            sendTo(duel.p1, 'DUEL_UPDATE', payload);
-            sendTo(duel.p2, 'DUEL_UPDATE', payload);
-
-            if (duel.state === 'ended') {
-              const w = duel.winner();
-              sendTo(duel.p1, 'DUEL_END', { duelId: duel.id, winner: w });
-              sendTo(duel.p2, 'DUEL_END', { duelId: duel.id, winner: w });
-              const p1 = state.players.get(duel.p1);
-              const p2 = state.players.get(duel.p2);
-              if (p1) p1.duelId = null;
-              if (p2) p2.duelId = null;
-            }
             break;
           }
 

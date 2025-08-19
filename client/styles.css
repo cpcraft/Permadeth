@@ -31,15 +31,6 @@ html, body {
 .panel input, .panel button { padding: 10px 12px; border-radius: 10px; border: none; }
 .hidden { display: none; }
 
-/* ---------- HUD ---------- */
-#hud { position: absolute; top: 16px; left: 16px; pointer-events: auto; }
-#hud .row {
-  background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px;
-  display: inline-flex; gap: 10px; align-items: center;
-}
-
-#duel { margin-top: 8px; background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px; }
-
 /* ---------- CHAT & COORDS ---------- */
 #chat { position: absolute; left: 16px; right: 16px; bottom: 16px; pointer-events: auto; }
 
@@ -56,5 +47,3 @@ html, body {
 }
 
 #chatInput { width: 100%; padding: 8px 10px; border-radius: 8px; border: none; }
-
-/* Player labels removed; grid is subtle inside canvas draw */

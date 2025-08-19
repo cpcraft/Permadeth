@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 
 export const ALLOWED_OPS = new Set([
-  'JOIN', 'MOVE_DIR', 'CHAT_SEND', 'LOOT_PICK', 'DUEL_REQUEST', 'DUEL_ACCEPT', 'DUEL_ACTION', 'PING'
+  // Duel ops removed
+  'JOIN', 'MOVE_DIR', 'CHAT_SEND', 'LOOT_PICK', 'PING'
 ]);
 
 export const MAX_MSG_BYTES = 2048;
@@ -19,10 +20,9 @@ const PICK_RADIUS = 48;
 
 export class GameState {
   constructor() {
-    this.players = new Map(); // playerId -> {id,name,color,x,y,dir:{x,y},ws,duelId}
+    this.players = new Map(); // playerId -> {id,name,color,x,y,dir:{x,y},ws}
     this.sockets = new Map(); // ws -> playerId
     this.loot = new Map();    // lootId -> {id,x,y,base_type}
-    this.duels = new Map();   // duelId -> Duel
   }
 
   addSocket(ws, playerId) {
@@ -70,14 +70,13 @@ export class GameState {
 
   setMoveDir(playerId, dx, dy) {
     const p = this.players.get(playerId);
-    if (!p || p.duelId) return; // locked during duel
+    if (!p) return;
     const len = Math.hypot(dx, dy) || 1;
     p.dir = { x: dx / len, y: dy / len };
   }
 
   tick(dt) {
     for (const p of this.players.values()) {
-      if (p.duelId) continue;
       const nx = p.x + p.dir.x * SPEED * dt;
       const ny = p.y + p.dir.y * SPEED * dt;
       p.x = Math.max(0, Math.min(WORLD_SIZE, nx));

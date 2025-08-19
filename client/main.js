@@ -8,12 +8,9 @@ const state = {
   constants: null,
   players: new Map(), // id -> {id,name,color,x,y}
   loot: new Map(),    // id -> {id,x,y,base_type}
-  sprites: new Map(), // id -> PIXI.Graphics
+  sprites: new Map(), // id -> {g, visX, visY}
   lootSprites: new Map(),
   ws: null,
-  hoverPlayer: null,
-  duel: null,
-  pendingInvite: null,
   moveTarget: null // {x,y}
 };
 
@@ -21,7 +18,7 @@ const state = {
 const world = new PIXI.Container();
 app.stage.addChild(world);
 
-// subtle tile grid (64px); redraws around camera
+// subtle 64px grid; redraw around camera
 const grid = new PIXI.Graphics();
 world.addChild(grid);
 const GRID_STEP = 64;
@@ -46,7 +43,7 @@ function drawGridAround(cx, cy) {
   for (let y = y0; y <= y1; y += GRID_STEP) grid.moveTo(x0, y).lineTo(x1, y);
 }
 
-// make stage clickable for point-to-move
+// Click-to-move
 app.stage.eventMode = 'static';
 app.stage.hitArea = app.screen;
 app.stage.cursor = 'crosshair';
@@ -62,9 +59,7 @@ function stopMovement() {
   send('MOVE_DIR', { dx: 0, dy: 0 });
 }
 
-// UI hooks
-const hudEl = document.getElementById('hud');
-const duelEl = document.getElementById('duel');
+// UI
 const chatLog = document.getElementById('log');
 const chatInput = document.getElementById('chatInput');
 const coordsEl = document.getElementById('coords');
@@ -135,7 +130,7 @@ btnLogin.onclick = async () => {
   if (e.key === 'Enter') btnRegister.click();
 }));
 
-// NOTE: auto-login removed. Player is not spawned until user authenticates.
+// Note: no auto-login; spawn only after joining.
 
 function connect() {
   if (state.ws && (state.ws.readyState === 0 || state.ws.readyState === 1)) return;
@@ -154,8 +149,7 @@ function connect() {
       case 'WELCOME':
         state.me = d.id;
         state.constants = d.constants;
-        authEl.classList.add('hidden');     // hide modal only after connected
-        hudEl.classList.remove('hidden');   // show minimal HUD
+        authEl.classList.add('hidden'); // hide modal only when connected
         centerCameraNow();
         break;
 
@@ -177,18 +171,14 @@ function connect() {
       case 'PLAYER_MOVES':
         d.forEach(({ id, x, y }) => {
           const p = state.players.get(id);
-          if (p) {
-            p.x = x; p.y = y;
-            const g = state.sprites.get(id);
-            if (g) { g.x = x; g.y = y; }
-          }
+          if (p) { p.x = x; p.y = y; }
         });
         break;
 
       case 'PLAYER_LEFT': {
         state.players.delete(d.id);
         const s = state.sprites.get(d.id);
-        if (s) { world.removeChild(s); state.sprites.delete(d.id); }
+        if (s) { world.removeChild(s.g); state.sprites.delete(d.id); }
         break;
       }
 
@@ -207,34 +197,6 @@ function connect() {
         logChat(`[Loot] You acquired ${d.item.base_type} (${d.item.uid})`);
         break;
 
-      case 'DUEL_INVITE':
-        logChat(`[Duel] Invitation from ${d.fromPlayerId}. Hover them & press F to accept.`);
-        state.pendingInvite = d;
-        break;
-
-      case 'DUEL_START':
-        state.duel = { duelId: d.duelId, hp: d.hp, turn: d.turn, lastAction: null, p1: d.p1, p2: d.p2 };
-        renderDuel();
-        break;
-
-      case 'DUEL_UPDATE':
-        if (state.duel && state.duel.duelId === d.duelId) {
-          state.duel.hp = d.hp;
-          state.duel.turn = d.turn;
-          state.duel.lastAction = d.lastAction;
-          renderDuel();
-        }
-        break;
-
-      case 'DUEL_END':
-        if (state.duel && state.duel.duelId === d.duelId) {
-          const win = d.winner === state.me ? 'You won!' : (d.winner ? `${d.winner} won` : 'Duel ended');
-          logChat(`[Duel] ${win}`);
-          state.duel = null;
-          duelEl.classList.add('hidden');
-        }
-        break;
-
       case 'ERROR':
         logChat(`[Error] ${d.message}`);
         break;
@@ -246,7 +208,7 @@ function connect() {
 }
 
 function rebuildSprites() {
-  for (const s of state.sprites.values()) world.removeChild(s);
+  for (const s of state.sprites.values()) world.removeChild(s.g);
   state.sprites.clear();
   for (const s of state.lootSprites.values()) world.removeChild(s);
   state.lootSprites.clear();
@@ -258,14 +220,12 @@ function rebuildSprites() {
 function ensurePlayerSprite(p) {
   if (state.sprites.has(p.id)) return;
   const g = new PIXI.Graphics();
-  g.x = p.x; g.y = p.y;
   g.circle(0, 0, 16).fill(p.color || '#2dd4bf').stroke({ width: 2, color: 0x000000, alpha: 0.4 });
-  g.eventMode = 'static';
-  g.cursor = 'pointer';
-  g.on('pointerover', () => { state.hoverPlayer = p.id; });
-  g.on('pointerout', () => { if (state.hoverPlayer === p.id) state.hoverPlayer = null; });
+  g.x = p.x; g.y = p.y;
+
+  // store smoothed visual position
+  state.sprites.set(p.id, { g, visX: p.x, visY: p.y });
   world.addChild(g);
-  state.sprites.set(p.id, g);
 }
 
 function ensureLootSprite(l) {
@@ -301,15 +261,6 @@ setInterval(() => {
   send('MOVE_DIR', { dx: ndx, dy: ndy });
 }, 50);
 
-// Duel hotkeys (strike/block/heal/run)
-window.addEventListener('keydown', (e) => {
-  if (!state.duel) return;
-  if (e.key === '1') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'strike' });
-  if (e.key === '2') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'block' });
-  if (e.key === '3') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'heal' });
-  if (e.key.toLowerCase() === 'r') send('DUEL_ACTION', { duelId: state.duel.duelId, action: 'flee' });
-});
-
 // Chat
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
@@ -320,7 +271,7 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 
-/* ---------- CAMERA + COORDS ---------- */
+/* ---------- CAMERA + COORDS + SMOOTHING ---------- */
 function centerCameraNow() {
   const me = state.me && state.players.get(state.me);
   if (!me) return;
@@ -338,7 +289,25 @@ function updateCoords(me) {
   coordsEl.textContent = `x:${tx}  y:${ty}`;
 }
 
+// Lerp each sprite towards its server position every frame for smoothness
+let lastMs = performance.now();
 app.ticker.add(() => {
+  const now = performance.now();
+  const dt = Math.max(0.001, (now - lastMs) / 1000);
+  lastMs = now;
+
+  // smoothing factor: higher = snappier; lower = smoother
+  const alpha = 1 - Math.exp(-10 * dt); // ~100ms time-constant
+
+  for (const [id, p] of state.players) {
+    const s = state.sprites.get(id);
+    if (!s) continue;
+    s.visX += (p.x - s.visX) * alpha;
+    s.visY += (p.y - s.visY) * alpha;
+    s.g.x = s.visX;
+    s.g.y = s.visY;
+  }
+
   centerCameraNow();
 });
 
