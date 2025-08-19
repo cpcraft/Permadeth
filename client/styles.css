@@ -9,7 +9,7 @@ html, body {
 #game { position: absolute; inset: 0; z-index: 0; }
 
 /* UI overlay */
-#ui { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+#ui { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 
 /* ---------- CENTERED AUTH MODAL ---------- */
 .modal {
@@ -33,11 +33,22 @@ html, body {
 
 /* ---------- TOP-RIGHT PLAYER LIST ---------- */
 #playersList {
-  position: absolute; top: 12px; right: 12px; width: 240px;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 260px;
+  z-index: 3;             /* ensure it stays on top */
   pointer-events: auto;
-  background: rgba(0,0,0,0.35); border-radius: 10px; padding: 8px 10px;
-  font-family: monospace; font-size: 12px; line-height: 1.5;
-  max-height: 45vh; overflow: auto;
+  background: rgba(0,0,0,0.35);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 45vh;
+  overflow: auto;
+  text-align: left;
+  white-space: pre;       /* keep each entry on its own line */
 }
 
 /* ---------- CHAT & COORDS ---------- */
