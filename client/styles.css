@@ -1,0 +1,15 @@
+html, body {
+  margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b1220; color: #e5f2ff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+#game { position: absolute; inset: 0; }
+#ui { position: absolute; inset: 0; pointer-events: none; }
+#join { position: absolute; top: 16px; left: 16px; gap: 8px; display: flex; pointer-events: auto; }
+#join input, #join button { padding: 8px 10px; border-radius: 8px; border: none; }
+#hud { position: absolute; top: 16px; left: 16px; pointer-events: none; }
+#hud .row { background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px; }
+#duel { margin-top: 8px; background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px; }
+.hidden { display: none; }
+#chat { position: absolute; left: 16px; right: 16px; bottom: 16px; pointer-events: auto; }
+#log { height: 160px; overflow-y: auto; background: rgba(0,0,0,0.35); border-radius: 10px; padding: 8px; margin-bottom: 8px; }
+#chatInput { width: 100%; padding: 8px 10px; border-radius: 8px; border: none; }
+.badge { padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); margin-right: 6px; }
