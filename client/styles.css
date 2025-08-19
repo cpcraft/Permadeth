@@ -6,57 +6,41 @@ html, body {
 }
 
 /* Canvas behind everything */
-#game {
-  position: absolute; inset: 0;
-  z-index: 0;
-}
+#game { position: absolute; inset: 0; z-index: 0; }
 
-/* UI overlay above canvas (but let children decide clickability) */
-#ui {
-  position: absolute; inset: 0;
-  pointer-events: none;          /* children will opt-in */
-  z-index: 1;                    /* ensure above #game */
-}
+/* UI overlay */
+#ui { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
 
-#join {
-  position: absolute; top: 16px; left: 16px;
-  gap: 8px; display: flex;
-  pointer-events: auto;          /* clickable */
+/* ---------- AUTH ---------- */
+#auth {
+  position: absolute; top: 16px; left: 16px; pointer-events: auto;
+  background: rgba(0,0,0,0.35); border-radius: 12px; padding: 10px;
+  display: inline-block; min-width: 280px;
 }
-
-#join input, #join button {
-  padding: 8px 10px; border-radius: 8px; border: none;
-}
-
-#hud {
-  position: absolute; top: 16px; left: 16px;
-  pointer-events: none;
-}
-
-#hud .row {
-  background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px;
-}
-
-#duel {
-  margin-top: 8px; background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px;
-}
-
+#authTabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.tab { padding: 6px 10px; border-radius: 8px; border: none; cursor: pointer; }
+.tab.active { background: rgba(255,255,255,0.15); }
+.panel { display: grid; gap: 8px; }
+.panel input, .panel button { padding: 8px 10px; border-radius: 8px; border: none; }
 .hidden { display: none; }
 
-/* Chat panel is interactive */
-#chat {
-  position: absolute; left: 16px; right: 16px; bottom: 16px;
-  pointer-events: auto;
+/* ---------- HUD ---------- */
+#hud { position: absolute; top: 16px; left: 16px; pointer-events: auto; }
+#hud .row {
+  background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px;
+  display: inline-flex; gap: 10px; align-items: center;
 }
+.pill { padding: 4px 10px; border-radius: 999px; border: none; cursor: pointer; }
 
+#duel { margin-top: 8px; background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 10px; }
+
+/* ---------- CHAT ---------- */
+#chat { position: absolute; left: 16px; right: 16px; bottom: 16px; pointer-events: auto; }
 #log {
   height: 160px; overflow-y: auto;
   background: rgba(0,0,0,0.35); border-radius: 10px;
   padding: 8px; margin-bottom: 8px;
 }
-
-#chatInput {
-  width: 100%; padding: 8px 10px; border-radius: 8px; border: none;
-}
+#chatInput { width: 100%; padding: 8px 10px; border-radius: 8px; border: none; }
 
 .badge { padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); margin-right: 6px; }

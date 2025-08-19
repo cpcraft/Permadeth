@@ -1,24 +1,19 @@
 import crypto from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
 
 export const ALLOWED_OPS = new Set([
-  'JOIN',
-  'MOVE_DIR',
-  'CHAT_SEND',
-  'LOOT_PICK',
-  'DUEL_REQUEST',
-  'DUEL_ACCEPT',
-  'DUEL_ACTION',
-  'PING'
+  'JOIN', 'MOVE_DIR', 'CHAT_SEND', 'LOOT_PICK', 'DUEL_REQUEST', 'DUEL_ACCEPT', 'DUEL_ACTION', 'PING'
 ]);
 
 export const MAX_MSG_BYTES = 2048;
-export const MAX_MSG_RATE = 50; // per second
+export const MAX_MSG_RATE = 50;
 
-// World constants
-const SPEED = 220; // px/s
-const TICK_MS = 50; // 20Hz physics
-const WORLD_BOUNDS = 20000; // square -20000..+20000
+// ---- WORLD ----
+export const WORLD_TILES = 1000;
+export const TILE_SIZE = 64;                 // px per tile
+const WORLD_SIZE = WORLD_TILES * TILE_SIZE;  // 64,000 px
+
+const SPEED = 220;        // px/s
+const TICK_MS = 50;       // 20Hz
 const LOOT_RADIUS = 40;
 const PICK_RADIUS = 48;
 
@@ -52,13 +47,13 @@ export class GameState {
     this.players.delete(playerId);
   }
 
-  spawnInitialLoot(count = 300) {
+  spawnInitialLoot(count = 400) {
     for (let i = 0; i < count; i++) {
-      const id = uuidv4();
+      const id = crypto.randomUUID();
       this.loot.set(id, {
         id,
-        x: Math.floor((Math.random() * 2 - 1) * WORLD_BOUNDS * 0.9),
-        y: Math.floor((Math.random() * 2 - 1) * WORLD_BOUNDS * 0.9),
+        x: Math.floor(Math.random() * WORLD_SIZE),
+        y: Math.floor(Math.random() * WORLD_SIZE),
         base_type: Math.random() < 0.5 ? 'herb' : 'ore_iron'
       });
     }
@@ -85,8 +80,8 @@ export class GameState {
       if (p.duelId) continue;
       const nx = p.x + p.dir.x * SPEED * dt;
       const ny = p.y + p.dir.y * SPEED * dt;
-      p.x = Math.max(-WORLD_BOUNDS, Math.min(WORLD_BOUNDS, nx));
-      p.y = Math.max(-WORLD_BOUNDS, Math.min(WORLD_BOUNDS, ny));
+      p.x = Math.max(0, Math.min(WORLD_SIZE, nx));
+      p.y = Math.max(0, Math.min(WORLD_SIZE, ny));
     }
   }
 }
@@ -123,7 +118,9 @@ export function dist(a, b) {
 export const CONSTANTS = {
   TICK_MS,
   SPEED,
-  WORLD_BOUNDS,
+  WORLD_TILES,
+  TILE_SIZE,
+  WORLD_SIZE,
   LOOT_RADIUS,
   PICK_RADIUS
 };

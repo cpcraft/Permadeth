@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
+import bcrypt from 'bcryptjs';
+
 import { pool, initSchema } from './db.js';
 import { Duel } from './duel.js';
 import {
@@ -22,8 +24,6 @@ async function main() {
   await initSchema();
 
   const app = express();
-
-  // Disable COOP / Origin-Agent-Cluster on HTTP to avoid Chrome warnings in dev
   app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginOpenerPolicy: false,
@@ -32,40 +32,89 @@ async function main() {
   }));
   app.use(express.json());
 
+  // ---------- Static client ----------
   const clientDir = path.resolve(__dirname, '../../client');
   const indexPath = path.join(clientDir, 'index.html');
-  console.log('[static] clientDir =', clientDir);
-  console.log('[static] index.html exists =', fs.existsSync(indexPath));
-
   app.use(express.static(clientDir));
-  app.get('*', (_req, res) => {
-    if (!fs.existsSync(indexPath)) {
-      res.status(500).send(
-        `client/index.html not found at:\n${indexPath}\n\nExpected layout:\nPermadeth/\n  client/index.html\n  server/src/index.js`
-      );
-      return;
-    }
+  app.get('*', (_req, res, next) => {
+    if (_req.path.startsWith('/api') || _req.path.startsWith('/ws')) return next();
+    if (!fs.existsSync(indexPath)) return res.status(500).send('client/index.html missing');
     res.sendFile(indexPath);
   });
 
+  // ---------- Auth API ----------
+  app.post('/api/register', async (req, res) => {
+    try {
+      const username = String(req.body?.username || '').trim();
+      const password = String(req.body?.password || '');
+      if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
+        return res.status(400).json({ error: 'Username must be 3-16 chars (A-Z, a-z, 0-9, _)' });
+      }
+      if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
+
+      const id = uuidv4();
+      const hash = await bcrypt.hash(password, 10);
+      const color = '#2dd4bf';
+
+      // name acts as the unique username
+      await pool.query(
+        'INSERT INTO players (id, name, color, password_hash) VALUES ($1,$2,$3,$4)',
+        [id, username, color, hash]
+      ).catch((e) => {
+        if (e.code === '23505') throw new Error('Username already taken');
+        throw e;
+      });
+
+      const token = uuidv4();
+      await pool.query('INSERT INTO sessions (token, player_id) VALUES ($1,$2)', [token, id]);
+
+      res.json({ token, player: { id, username, color } });
+    } catch (e) {
+      const msg = e.message || 'Registration failed';
+      const code = msg.includes('taken') ? 409 : 500;
+      res.status(code).json({ error: msg });
+    }
+  });
+
+  app.post('/api/login', async (req, res) => {
+    try {
+      const username = String(req.body?.username || '').trim();
+      const password = String(req.body?.password || '');
+      if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+
+      const { rows } = await pool.query('SELECT id, name, color, password_hash FROM players WHERE name=$1', [username]);
+      if (!rows.length || !rows[0].password_hash) return res.status(401).json({ error: 'Invalid username or password' });
+
+      const ok = await bcrypt.compare(password, rows[0].password_hash);
+      if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
+
+      const token = uuidv4();
+      await pool.query('INSERT INTO sessions (token, player_id) VALUES ($1,$2)', [token, rows[0].id]);
+      res.json({ token, player: { id: rows[0].id, username: rows[0].name, color: rows[0].color } });
+    } catch {
+      res.status(500).json({ error: 'Login failed' });
+    }
+  });
+
+  // ---------- WS + Game ----------
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   const state = new GameState();
   state.spawnInitialLoot(400);
 
-  const broadcast = (type, d) => {
+  function broadcast(type, d) {
     const msg = JSON.stringify({ t: type, d });
     for (const pid of state.players.keys()) {
       const p = state.players.get(pid);
       if (p?.ws && p.ws.readyState === 1) p.ws.send(msg);
     }
-  };
-  const sendTo = (pid, type, d) => {
+  }
+  function sendTo(pid, type, d) {
     const p = state.players.get(pid);
     if (!p?.ws || p.ws.readyState !== 1) return;
     p.ws.send(JSON.stringify({ t: type, d }));
-  };
+  }
 
   setInterval(() => {
     state.tick(CONSTANTS.TICK_MS / 1000);
@@ -91,20 +140,23 @@ async function main() {
       try {
         switch (op) {
           case 'JOIN': {
-            const name = String(d?.name || '').slice(0, 16).trim();
-            const color = String(d?.color || '#00aaff').slice(0, 16);
-            if (!name) { ws.send(JSON.stringify({ t: 'ERROR', d: { message: 'Name required' } })); return; }
+            // JOIN now expects a session token
+            const token = String(d?.token || '');
+            if (!token) { ws.send(JSON.stringify({ t: 'ERROR', d: { message: 'Missing token' } })); return; }
 
-            const id = uuidv4();
-            await pool.query(
-              'INSERT INTO players (id,name,color) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
-              [id, name, color]
+            const { rows } = await pool.query(
+              `SELECT s.player_id AS id, p.name, p.color
+               FROM sessions s JOIN players p ON p.id = s.player_id
+               WHERE s.token = $1`, [token]
             );
+            if (!rows.length) { ws.send(JSON.stringify({ t: 'ERROR', d: { message: 'Invalid token' } })); return; }
+
+            const { id, name, color } = rows[0];
 
             const player = {
               id, name, color,
-              x: (Math.random() * 2 - 1) * 500,
-              y: (Math.random() * 2 - 1) * 500,
+              x: Math.random() * CONSTANTS.WORLD_SIZE,
+              y: Math.random() * CONSTANTS.WORLD_SIZE,
               dir: { x: 0, y: 0 },
               ws, duelId: null
             };
@@ -120,7 +172,8 @@ async function main() {
           case 'MOVE_DIR': {
             const pid = state.sockets.get(ws);
             if (!pid) break;
-            state.setMoveDir(pid, Number(d?.dx || 0), Number(d?.dy || 0));
+            const dx = Number(d?.dx || 0), dy = Number(d?.dy || 0);
+            state.setMoveDir(pid, dx, dy);
             break;
           }
 

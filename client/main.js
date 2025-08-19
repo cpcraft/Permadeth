@@ -8,48 +8,110 @@ const state = {
   constants: null,
   players: new Map(), // id -> {id,name,color,x,y}
   loot: new Map(),    // id -> {id,x,y,base_type}
-  sprites: new Map(), // id -> PIXI.Graphics
+  sprites: new Map(), // id -> {g,label}
   lootSprites: new Map(),
   ws: null,
   lastDir: { x: 0, y: 0 },
   keys: new Set(),
   hoverPlayer: null,
-  duel: null,          // {duelId, hp:{}, turn, lastAction}
-  pendingInvite: null
+  duel: null,
+  pendingInvite: null,
+  showTiles: false
 };
 
 // World + layers
 const world = new PIXI.Container();
 app.stage.addChild(world);
 
-// subtle grid background (helps orientation)
+// dynamic grid around camera
 const grid = new PIXI.Graphics();
 world.addChild(grid);
-function drawGrid() {
+const GRID_STEP = 64; // tile size
+let lastGridCenter = { x: -99999, y: -99999 };
+function drawGridAround(cx, cy) {
+  // redraw only if camera moved > half tile
+  if (Math.hypot(cx - lastGridCenter.x, cy - lastGridCenter.y) < GRID_STEP / 2) return;
+  lastGridCenter = { x: cx, y: cy };
+
   grid.clear();
-  const step = 200;
-  const size = 8000; // draw a chunk around the camera
   grid.alpha = 0.15;
   grid.stroke({ width: 1 });
-  for (let x = -size; x <= size; x += step) {
-    grid.moveTo(x, -size).lineTo(x, size);
-  }
-  for (let y = -size; y <= size; y += step) {
-    grid.moveTo(-size, y).lineTo(size, y);
-  }
+
+  const viewW = app.renderer.width;
+  const viewH = app.renderer.height;
+  const pad = GRID_STEP * 10;
+  const x0 = Math.floor((cx - viewW/2 - pad) / GRID_STEP) * GRID_STEP;
+  const x1 = Math.ceil((cx + viewW/2 + pad) / GRID_STEP) * GRID_STEP;
+  const y0 = Math.floor((cy - viewH/2 - pad) / GRID_STEP) * GRID_STEP;
+  const y1 = Math.ceil((cy + viewH/2 + pad) / GRID_STEP) * GRID_STEP;
+
+  for (let x = x0; x <= x1; x += GRID_STEP) grid.moveTo(x, y0).lineTo(x, y1);
+  for (let y = y0; y <= y1; y += GRID_STEP) grid.moveTo(x0, y).lineTo(x1, y);
 }
-drawGrid();
 
 // UI hooks
-const joinEl = document.getElementById('join');
-const btnJoin = document.getElementById('btnJoin');
-const nameEl = document.getElementById('name');
-const colorEl = document.getElementById('color');
 const hudEl = document.getElementById('hud');
 const youEl = document.getElementById('you');
 const duelEl = document.getElementById('duel');
 const chatLog = document.getElementById('log');
 const chatInput = document.getElementById('chatInput');
+const btnCoords = document.getElementById('btnCoords');
+
+// auth elements
+const authEl = document.getElementById('auth');
+const tabLogin = document.getElementById('tabLogin');
+const tabRegister = document.getElementById('tabRegister');
+const loginView = document.getElementById('loginView');
+const registerView = document.getElementById('registerView');
+const loginUser = document.getElementById('loginUser');
+const loginPass = document.getElementById('loginPass');
+const btnLogin = document.getElementById('btnLogin');
+const regUser = document.getElementById('regUser');
+const regPass = document.getElementById('regPass');
+const regPass2 = document.getElementById('regPass2');
+const btnRegister = document.getElementById('btnRegister');
+
+tabLogin.onclick = () => {
+  tabLogin.classList.add('active'); tabRegister.classList.remove('active');
+  loginView.classList.remove('hidden'); registerView.classList.add('hidden');
+};
+tabRegister.onclick = () => {
+  tabRegister.classList.add('active'); tabLogin.classList.remove('active');
+  registerView.classList.remove('hidden'); loginView.classList.add('hidden');
+};
+
+btnRegister.onclick = async () => {
+  try {
+    if (regPass.value !== regPass2.value) return logChat('[Auth] Passwords do not match');
+    const r = await fetch('/api/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: regUser.value.trim(), password: regPass.value })
+    });
+    const data = await r.json();
+    if (!r.ok) return logChat('[Auth] ' + (data.error || 'Registration failed'));
+    localStorage.setItem('pd_token', data.token);
+    logChat('[Auth] Registration OK. Connecting...');
+    connect();
+  } catch (e) { logChat('[Auth] Registration error'); }
+};
+
+btnLogin.onclick = async () => {
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value })
+    });
+    const data = await r.json();
+    if (!r.ok) return logChat('[Auth] ' + (data.error || 'Login failed'));
+    localStorage.setItem('pd_token', data.token);
+    logChat('[Auth] Login OK. Connecting...');
+    connect();
+  } catch (e) { logChat('[Auth] Login error'); }
+};
+
+// auto-login if token exists
+const existingToken = localStorage.getItem('pd_token');
+if (existingToken) connect();
 
 function logChat(msg) {
   const p = document.createElement('div');
@@ -59,12 +121,14 @@ function logChat(msg) {
 }
 
 function connect() {
+  if (state.ws && state.ws.readyState === 1) return;
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
   const ws = new WebSocket(url);
   state.ws = ws;
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({ op: 'JOIN', d: { name: nameEl.value || 'Player', color: colorEl.value || '#2dd4bf' } }));
+    const token = localStorage.getItem('pd_token');
+    ws.send(JSON.stringify({ op: 'JOIN', d: { token } }));
   };
 
   ws.onmessage = (ev) => {
@@ -74,7 +138,7 @@ function connect() {
         state.me = d.id;
         state.constants = d.constants;
         youEl.textContent = `You: ${state.me}`;
-        joinEl.classList.add('hidden');
+        authEl.classList.add('hidden');
         hudEl.classList.remove('hidden');
         centerCameraNow();
         break;
@@ -98,16 +162,16 @@ function connect() {
           const p = state.players.get(id);
           if (p) {
             p.x = x; p.y = y;
-            const g = state.sprites.get(id);
-            if (g) { g.x = x; g.y = y; }
+            const s = state.sprites.get(id);
+            if (s) { s.g.x = x; s.g.y = y; s.label.x = x; s.label.y = y - 26; }
           }
         });
         break;
 
       case 'PLAYER_LEFT': {
         state.players.delete(d.id);
-        const g = state.sprites.get(d.id);
-        if (g) { world.removeChild(g); state.sprites.delete(d.id); }
+        const s = state.sprites.get(d.id);
+        if (s) { world.removeChild(s.g); world.removeChild(s.label); state.sprites.delete(d.id); }
         break;
       }
 
@@ -128,7 +192,7 @@ function connect() {
 
       case 'DUEL_INVITE':
         logChat(`[Duel] Invitation from ${d.fromPlayerId}. Hover them & press F to accept.`);
-        state.pendingInvite = d; // {fromPlayerId, duelId}
+        state.pendingInvite = d;
         break;
 
       case 'DUEL_START':
@@ -163,7 +227,7 @@ function connect() {
 
 function rebuildSprites() {
   // Clear all
-  for (const s of state.sprites.values()) world.removeChild(s);
+  for (const s of state.sprites.values()) { world.removeChild(s.g); world.removeChild(s.label); }
   state.sprites.clear();
   for (const s of state.lootSprites.values()) world.removeChild(s);
   state.lootSprites.clear();
@@ -184,7 +248,14 @@ function ensurePlayerSprite(p) {
   g.on('pointerover', () => { state.hoverPlayer = p.id; });
   g.on('pointerout', () => { if (state.hoverPlayer === p.id) state.hoverPlayer = null; });
   world.addChild(g);
-  state.sprites.set(p.id, g);
+
+  const label = new PIXI.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 12, fill: 0xffffff, align: 'center' } });
+  label.x = p.x; label.y = p.y - 26;
+  label.anchor.set(0.5);
+  label.visible = state.showTiles;
+  world.addChild(label);
+
+  state.sprites.set(p.id, { g, label });
 }
 
 function ensureLootSprite(l) {
@@ -255,21 +326,12 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 
-btnJoin.addEventListener('click', () => {
-  connect();
-});
-
-function renderDuel() {
-  if (!state.duel) { duelEl.classList.add('hidden'); return; }
-  const { hp, turn, p1, p2 } = state.duel;
-  duelEl.classList.remove('hidden');
-  duelEl.innerHTML = `
-    <div><span class="badge">Duel</span> Turn: ${turn === state.me ? 'You' : turn}</div>
-    <div>HP ${p1}: ${hp[p1] ?? 0}</div>
-    <div>HP ${p2}: ${hp[p2] ?? 0}</div>
-    <div>Actions: [1] Strike [2] Block [3] Heal</div>
-  `;
-}
+// tiles/coords toggle
+btnCoords.onclick = () => {
+  state.showTiles = !state.showTiles;
+  for (const s of state.sprites.values()) s.label.visible = state.showTiles;
+  updateAllLabels();
+};
 
 /* ---------- CAMERA FOLLOW ---------- */
 function centerCameraNow() {
@@ -277,6 +339,20 @@ function centerCameraNow() {
   if (!me) return;
   world.x = (app.renderer.width / 2) - me.x;
   world.y = (app.renderer.height / 2) - me.y;
+  drawGridAround(me.x, me.y);
+  if (state.showTiles) updateAllLabels();
+}
+
+function updateAllLabels() {
+  if (!state.constants) return;
+  const tileSize = state.constants.TILE_SIZE || 64;
+  for (const p of state.players.values()) {
+    const s = state.sprites.get(p.id);
+    if (!s) continue;
+    const tx = Math.floor(p.x / tileSize);
+    const ty = Math.floor(p.y / tileSize);
+    s.label.text = `${tx};${ty}`;
+  }
 }
 
 // update camera every frame
@@ -284,8 +360,6 @@ app.ticker.add(() => {
   centerCameraNow();
 });
 
-// keep grid roughly centered chunk
 window.addEventListener('resize', () => {
-  drawGrid();
   centerCameraNow();
 });

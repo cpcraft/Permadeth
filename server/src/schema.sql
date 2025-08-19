@@ -1,4 +1,4 @@
--- Players & sessions
+-- players table (add columns if they don't exist for auth + uniqueness)
 CREATE TABLE IF NOT EXISTS players (
   id UUID PRIMARY KEY,
   name TEXT NOT NULL,
@@ -6,7 +6,18 @@ CREATE TABLE IF NOT EXISTS players (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Simple auth/session token if you later want persistence across reconnects
+-- add password column if missing
+ALTER TABLE players
+  ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+-- name must be unique (acts as the username)
+CREATE UNIQUE INDEX IF NOT EXISTS players_name_key ON players(name);
+
+-- sensible default for color
+ALTER TABLE players
+  ALTER COLUMN color SET DEFAULT '#2dd4bf';
+
+-- sessions for auth tokens
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
@@ -16,7 +27,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- Items: unique *instances* found or crafted. UID = playerId + "-" + 10 digits
 CREATE TABLE IF NOT EXISTS items (
   uid TEXT PRIMARY KEY,
-  base_type TEXT NOT NULL,   -- e.g., "sword_wood", "herb", "ore_iron"
+  base_type TEXT NOT NULL,
   found_by UUID REFERENCES players(id),
   crafted_by UUID REFERENCES players(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -34,8 +45,8 @@ CREATE TABLE IF NOT EXISTS duels (
   id UUID PRIMARY KEY,
   p1 UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   p2 UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
-  state TEXT NOT NULL,             -- "pending" | "active" | "ended"
-  turn_player UUID,                -- whose turn it is when active
+  state TEXT NOT NULL,
+  turn_player UUID,
   p1_hp SMALLINT NOT NULL DEFAULT 100,
   p2_hp SMALLINT NOT NULL DEFAULT 100,
   winner UUID,

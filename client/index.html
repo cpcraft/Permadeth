@@ -8,23 +8,42 @@
   </head>
   <body>
     <div id="ui">
-      <div id="join">
-        <input id="name" maxlength="16" placeholder="Name" />
-        <input id="color" value="#2dd4bf" />
-        <button id="btnJoin">Join</button>
+      <!-- Auth -->
+      <div id="auth">
+        <div id="authTabs">
+          <button id="tabLogin" class="tab active">Log in</button>
+          <button id="tabRegister" class="tab">Register</button>
+        </div>
+        <div id="loginView" class="panel">
+          <input id="loginUser" maxlength="16" placeholder="Username" />
+          <input id="loginPass" type="password" placeholder="Password" />
+          <button id="btnLogin">Log in</button>
+        </div>
+        <div id="registerView" class="panel hidden">
+          <input id="regUser" maxlength="16" placeholder="Username" />
+          <input id="regPass" type="password" placeholder="Password (min 6)" />
+          <input id="regPass2" type="password" placeholder="Confirm password" />
+          <button id="btnRegister">Create account</button>
+        </div>
       </div>
+
+      <!-- HUD -->
       <div id="hud" class="hidden">
         <div class="row">
           <span id="you"></span>
           <span> | WASD to move • Click player + F to duel • 1/2/3 = strike/block/heal</span>
+          <button id="btnCoords" class="pill">Toggle tiles</button>
         </div>
         <div id="duel" class="hidden"></div>
       </div>
+
+      <!-- Chat -->
       <div id="chat">
         <div id="log"></div>
         <input id="chatInput" placeholder="Enter to send..." />
       </div>
     </div>
+
     <canvas id="game"></canvas>
 
     <!-- Pixi v8 via ESM -->
