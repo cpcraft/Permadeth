@@ -3,9 +3,15 @@ CREATE TABLE IF NOT EXISTS players (
   id UUID PRIMARY KEY,
   name TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT '#2dd4bf',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  password_hash TEXT
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ✅ Add new columns/defaults if upgrading from older schema
+ALTER TABLE players
+  ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+ALTER TABLE players
+  ALTER COLUMN color SET DEFAULT '#2dd4bf';
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
@@ -50,7 +56,8 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 
 -- ========== DATA CLEANUP BEFORE UNIQUE INDEX ==========
--- If duplicate usernames exist, keep the newest row per name and rename older ones with a short suffix.
+-- If duplicate usernames exist (case-insensitive), keep the newest row per name
+-- and rename older ones with a short suffix to make room for the unique index.
 DO $$
 BEGIN
   IF EXISTS (
@@ -72,5 +79,4 @@ END
 $$;
 
 -- ========== CASE-INSENSITIVE UNIQUE USERNAME ==========
--- Enforce uniqueness on LOWER(name) so "Bob" and "bob" are considered the same.
 CREATE UNIQUE INDEX IF NOT EXISTS players_name_key ON players (lower(name));
