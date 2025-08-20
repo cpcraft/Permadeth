@@ -11,9 +11,28 @@
     <link rel="stylesheet" href="/src/ui/login.css" />
   </head>
   <body>
+<<<<<<< HEAD
     <!-- Game mount -->
     <div id="game-root">
       <div id="game"></div>
+=======
+    <div id="ui">
+      <div id="topRight">
+        <div id="playersList"></div>
+      </div>
+      <div id="chat">
+        <div id="coords"></div>
+        <div id="log"></div>
+        <input id="chatInput" placeholder="Enter to send..." />
+      </div>
+      <div id="engageModal" class="overlay hidden">
+        <div class="overlayBody">
+          <div class="overlayTitle">Duel</div>
+          <div class="overlayText">You touched another player. (No mechanics yet.)</div>
+          <button id="btnLeave">Leave</button>
+        </div>
+      </div>
+>>>>>>> parent of c1c4bd7 (Revert "a")
     </div>
 
     <!-- Login overlay (clickable, above canvas) -->
@@ -25,6 +44,7 @@
           <input id="name" name="name" maxlength="16" placeholder="Your name" required />
         </label>
 
+<<<<<<< HEAD
         <label>
           Color
           <input id="color" name="color" type="color" value="#59c2ff" />
@@ -39,5 +59,12 @@
     <script type="module" src="/src/main.js"></script>
     <!-- Overlay logic kept separate to avoid inline handlers + CSP issues -->
     <script type="module" src="/src/ui/login.js"></script>
+=======
+    <script type="module">
+      import * as PIXI from 'https://unpkg.com/pixi.js@8.x/dist/pixi.mjs';
+      window.PIXI = PIXI;
+    </script>
+    <script type="module" src="./main.js"></script>
+>>>>>>> parent of c1c4bd7 (Revert "a")
   </body>
 </html>
