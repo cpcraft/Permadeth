@@ -37,30 +37,17 @@ app.ticker.minFPS = 0;
 const world = new PIXI.Container();
 app.stage.addChild(world);
 
-<<<<<<< HEAD
-// Simple camera container that follows the player DIRECTLY (no lerp)
-const camera = new PIXI.Container();
-world.addChild(camera);
-=======
-// Layers: ground (tilemap) -> grid -> entities
+// Layers: ground (tilemap) -> grid -> indicators -> entities
 const groundLayer = new PIXI.Container();
 world.addChild(groundLayer);
->>>>>>> parent of e776a63 (a)
 
-// Entities map: id -> sprite
-const sprites = new Map();
+const grid = new PIXI.Graphics();
+world.addChild(grid);
 
-<<<<<<< HEAD
-// Networking state
-const socket = new WebSocket(`ws://${location.hostname}:3000/ws`);
-socket.binaryType = 'arraybuffer';
+// Arrow indicator layer (above grid, under entities)
+const indicatorLayer = new PIXI.Container();
+world.addChild(indicatorLayer);
 
-// Client rendering helpers
-const snaps = new SnapshotBuffer({ delayMs: 100, maxMs: 1000 });
-let myId = null;
-const predictor = new LocalPredictor(null);
-const SPEED = 220; // must match server
-=======
 // 64px grid (same as server’s TILE_SIZE)
 const GRID_STEP = 64;
 let lastGridCenter = { x: -99999, y: -99999 };
@@ -298,16 +285,12 @@ function rebuildFightTags(){
     const s=state.sprites.get(p.id); if(!s) continue;
     const tag=document.createElement('div'); tag.className='fightTag'; tag.textContent='fighting';
     document.body.appendChild(tag); s.tagEl=tag;
->>>>>>> parent of e776a63 (a)
   }
+}
 
-<<<<<<< HEAD
-  if (msg.op === 'STATE') {
-    // expected: { op:'STATE', ts:<ms>, seq:<lastProcessedSeq>, entities:{ id:{x,y,r} } }
-    snaps.push({ ts: msg.ts, state: { entities: msg.entities } });
-    if (myId) predictor.ack(msg.seqFor?.[myId] ?? msg.seq); // support per-player ack or global seq
-=======
-// Player list (top-right)
+/* ==============================
+   TOP-RIGHT PLAYER LIST
+============================== */
 function updatePlayersList(){
   const tileSize = state.constants?.TILE_SIZE || 64;
   const rows=[];
@@ -402,31 +385,13 @@ app.ticker.add(()=>{
     s.visY += (p.y - s.visY)*alpha;
     s.g.x=s.visX; s.g.y=s.visY;
     if(s.tagEl){
-      const sx=s.visX+world.x, sy=s.visY+world.y-24;
-      s.tagEl.style.left=`${sx}px`; s.tagEl.style.top=`${sy}px`;
->>>>>>> parent of e776a63 (a)
+      const sx=s.visX+world.x, sy=s.visY+world.y-24; s.tagEl.style.left=`${sx}px`; s.tagEl.style.top=`${sy}px`;
     }
   }
+  // animate move arrow (pulse/bob) and keep it pointing toward target
+  updateMoveArrow(dt);
 });
-// Somewhere near your startup code in client/src/main.js:
-window.addEventListener('PD_JOIN', (ev) => {
-  const { name, color } = ev.detail;
 
-<<<<<<< HEAD
-  // If you already open the socket earlier, just send JOIN here.
-  // Otherwise, open it lazily now.
-  if (!window.gameSocket || window.gameSocket.readyState > 1) {
-    const ws = new WebSocket(`ws://${location.hostname}:3000/ws`);
-    ws.addEventListener('open', () => {
-      ws.send(JSON.stringify({ op: 'JOIN', name, color }));
-    });
-    // store globally if your code expects it
-    window.gameSocket = ws;
-  } else {
-    window.gameSocket.send(JSON.stringify({ op: 'JOIN', name, color }));
-  }
-});
-=======
 window.addEventListener('resize', ()=> centerCameraNow());
 
 /* ==============================
@@ -620,4 +585,78 @@ const tileRenderer = (() => {
     }
   };
 })();
->>>>>>> parent of e776a63 (a)
+
+/* ==============================
+   MOVE ARROW (NWSE compass + animation)
+============================== */
+let moveArrow = null;
+function buildMoveArrow() {
+  // Container
+  const c = new PIXI.Container();
+
+  // Compass cross (NWSE-ish) behind the arrow
+  const cross = new PIXI.Graphics();
+  cross.stroke({ width: 2, color: 0x00ff66, alpha: 0.25 });
+  cross.moveTo(-18, 0).lineTo(18, 0);
+  cross.moveTo(0, -18).lineTo(0, 18);
+  c.addChild(cross);
+
+  // Labels N W S E
+  const mkLabel = (txt, x, y) => {
+    const t = new PIXI.Text({ text: txt, style: { fontFamily: 'monospace', fontSize: 10, fill: 0x00ff66, align: 'center' } });
+    t.anchor.set(0.5);
+    t.x = x; t.y = y;
+    t.alpha = 0.8;
+    c.addChild(t);
+  };
+  mkLabel('N', 0, -26);
+  mkLabel('S', 0, 26);
+  mkLabel('W', -26, 0);
+  mkLabel('E', 26, 0);
+
+  // Arrow head (triangle)
+  const arrow = new PIXI.Graphics();
+  arrow.fill(0x00ff66, 1).moveTo(0, -20).lineTo(12, 12).lineTo(-12, 12).lineTo(0, -20);
+  arrow.stroke({ width: 2, color: 0x00331a, alpha: 0.6 });
+  c.addChild(arrow);
+
+  c.alpha = 0.95;
+  c.visible = false;
+  indicatorLayer.addChild(c);
+  return c;
+}
+function showMoveArrow(){
+  if (!moveArrow) moveArrow = buildMoveArrow();
+  moveArrow.visible = true;
+}
+function hideMoveArrow(){
+  if (moveArrow) moveArrow.visible = false;
+}
+let arrowTime = 0;
+function updateMoveArrow(dt){
+  if (!moveArrow || !moveArrow.visible) return;
+  const me = state.me && state.players.get(state.me);
+  if (!me) { hideMoveArrow(); return; }
+  // Position arrow at the player (use smoothed position if available)
+  const s = state.sprites.get(state.me);
+  const ax = (s?.visX ?? me.x), ay = (s?.visY ?? me.y);
+  moveArrow.x = ax; moveArrow.y = ay;
+
+  // Point toward the target
+  if (state.moveTarget) {
+    const dx = state.moveTarget.x - ax;
+    const dy = state.moveTarget.y - ay;
+    moveArrow.rotation = Math.atan2(dy, dx) + Math.PI / 2; // triangle points "up" by default
+  }
+
+  // Little animation: pulse scale and bob up/down
+  arrowTime += dt;
+  const pulse = 1 + Math.sin(arrowTime * 6) * 0.08;   // scale pulse
+  const bob = Math.sin(arrowTime * 3) * 2;            // vertical bob (pixels)
+  moveArrow.scale.set(pulse, pulse);
+  moveArrow.y = ay + bob;
+}
+
+/* ==============================
+   END
+============================== */
