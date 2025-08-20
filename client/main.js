@@ -123,3 +123,20 @@ app.ticker.add(() => {
     }
   }
 });
+// Somewhere near your startup code in client/src/main.js:
+window.addEventListener('PD_JOIN', (ev) => {
+  const { name, color } = ev.detail;
+
+  // If you already open the socket earlier, just send JOIN here.
+  // Otherwise, open it lazily now.
+  if (!window.gameSocket || window.gameSocket.readyState > 1) {
+    const ws = new WebSocket(`ws://${location.hostname}:3000/ws`);
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({ op: 'JOIN', name, color }));
+    });
+    // store globally if your code expects it
+    window.gameSocket = ws;
+  } else {
+    window.gameSocket.send(JSON.stringify({ op: 'JOIN', name, color }));
+  }
+});

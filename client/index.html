@@ -1,59 +1,43 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>Permadeth</title>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ws: http: https:; font-src 'self' data:"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="./styles.css" />
+    <title>Permadeth</title>
+    <link rel="stylesheet" href="/src/ui/login.css" />
   </head>
   <body>
-    <div id="ui">
-      <!-- Centered Auth Modal -->
-      <div id="auth" class="modal">
-        <div id="authTabs" class="tabs">
-          <button id="tabLogin" class="tab active">Log in</button>
-          <button id="tabRegister" class="tab">Register</button>
-        </div>
-        <div id="loginView" class="panel">
-          <input id="loginUser" maxlength="16" placeholder="Username" />
-          <input id="loginPass" type="password" placeholder="Password" />
-          <button id="btnLogin">Log in</button>
-        </div>
-        <div id="registerView" class="panel hidden">
-          <input id="regUser" maxlength="16" placeholder="Username" />
-          <input id="regPass" type="password" placeholder="Password (min 6)" />
-          <input id="regPass2" type="password" placeholder="Confirm password" />
-          <button id="btnRegister">Create account</button>
-        </div>
-      </div>
-
-      <!-- Top-right players list -->
-      <div id="playersList" class="hidden"></div>
-
-      <!-- Chat + Coords -->
-      <div id="chat">
-        <div id="coords"></div>
-        <div id="log"></div>
-        <input id="chatInput" placeholder="Enter to send..." />
-      </div>
-
-      <!-- Lightweight duel overlay -->
-      <div id="engageModal" class="overlay hidden">
-        <div class="overlayBody">
-          <div class="overlayTitle">Duel</div>
-          <div class="overlayText">You touched another player. This is just a screen — no mechanics yet.</div>
-          <button id="btnLeave">Leave</button>
-        </div>
-      </div>
+    <!-- Game mount -->
+    <div id="game-root">
+      <div id="game"></div>
     </div>
 
-    <canvas id="game"></canvas>
+    <!-- Login overlay (clickable, above canvas) -->
+    <div id="login-overlay" class="ui-layer">
+      <form id="login-form" class="panel" autocomplete="off">
+        <h1>Permadeth</h1>
+        <label>
+          Name
+          <input id="name" name="name" maxlength="16" placeholder="Your name" required />
+        </label>
 
-    <!-- Pixi v8 via ESM -->
-    <script type="module">
-      import * as PIXI from 'https://unpkg.com/pixi.js@8.x/dist/pixi.mjs';
-      window.PIXI = PIXI;
-    </script>
-    <script type="module" src="./main.js"></script>
+        <label>
+          Color
+          <input id="color" name="color" type="color" value="#59c2ff" />
+        </label>
+
+        <button id="login-btn" type="submit">Enter</button>
+        <p id="login-error" class="error" aria-live="polite"></p>
+      </form>
+    </div>
+
+    <!-- Your client bundle -->
+    <script type="module" src="/src/main.js"></script>
+    <!-- Overlay logic kept separate to avoid inline handlers + CSP issues -->
+    <script type="module" src="/src/ui/login.js"></script>
   </body>
 </html>
