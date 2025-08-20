@@ -3,6 +3,9 @@ const canvas = document.getElementById('game');
 const app = new PIXI.Application();
 await app.init({ canvas, resizeTo: window, antialias: true, backgroundAlpha: 0 });
 
+/* ==============================
+   STATE
+============================== */
 const state = {
   me: null,
   constants: null,
@@ -15,29 +18,40 @@ const state = {
   engaged: false,
 };
 
-// World layer
+/* ==============================
+   WORLD LAYERS
+============================== */
 const world = new PIXI.Container();
 app.stage.addChild(world);
 
-// 64px grid; camera NOT smoothed
+// Layers: ground (tilemap) -> grid -> entities
+const groundLayer = new PIXI.Container();
+world.addChild(groundLayer);
+
 const grid = new PIXI.Graphics();
 world.addChild(grid);
+
+// 64px grid (same as server’s TILE_SIZE)
 const GRID_STEP = 64;
 let lastGridCenter = { x: -99999, y: -99999 };
 function drawGridAround(cx, cy) {
   if (Math.hypot(cx - lastGridCenter.x, cy - lastGridCenter.y) < GRID_STEP / 2) return;
   lastGridCenter = { x: cx, y: cy };
   grid.clear(); grid.alpha = 0.12; grid.stroke({ width: 1 });
+
   const viewW = app.renderer.width, viewH = app.renderer.height, pad = GRID_STEP * 8;
   const x0 = Math.floor((cx - viewW/2 - pad) / GRID_STEP) * GRID_STEP;
   const x1 = Math.ceil((cx + viewW/2 + pad) / GRID_STEP) * GRID_STEP;
   const y0 = Math.floor((cy - viewH/2 - pad) / GRID_STEP) * GRID_STEP;
   const y1 = Math.ceil((cy + viewH/2 + pad) / GRID_STEP) * GRID_STEP;
+
   for (let x = x0; x <= x1; x += GRID_STEP) grid.moveTo(x, y0).lineTo(x, y1);
   for (let y = y0; y <= y1; y += GRID_STEP) grid.moveTo(x0, y).lineTo(x1, y);
 }
 
-// Click‑to‑move
+/* ==============================
+   CLICK-TO-MOVE
+============================== */
 app.stage.eventMode = 'static';
 app.stage.hitArea = app.screen;
 app.stage.cursor = 'crosshair';
@@ -48,7 +62,9 @@ app.stage.on('pointerdown', (e) => {
 });
 function stopMovement() { state.moveTarget = null; send('MOVE_DIR', { dx: 0, dy: 0 }); }
 
-// UI refs
+/* ==============================
+   UI REFS
+============================== */
 const chatLog = document.getElementById('log');
 const chatInput = document.getElementById('chatInput');
 const coordsEl = document.getElementById('coords');
@@ -93,7 +109,9 @@ btnLogin.onclick = async () => {
 
 btnLeave.onclick = ()=> send('ENGAGE_LEAVE',{});
 
-// WS
+/* ==============================
+   WEBSOCKET
+============================== */
 function connect(){
   if(state.ws && (state.ws.readyState===0 || state.ws.readyState===1)) return;
   const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
@@ -107,6 +125,12 @@ function connect(){
       case 'WELCOME':
         state.me=d.id; state.constants=d.constants;
         authEl.classList.add('hidden'); playersList.classList.remove('hidden');
+        // Build tile renderer now that we know TILE_SIZE etc.
+        tileRenderer.init({
+          tileSize: state.constants?.TILE_SIZE || 64,
+          worldTiles: state.constants?.WORLD_TILES || 1000
+        });
+        centerCameraNow();
         break;
 
       case 'WORLD_SNAPSHOT':
@@ -114,23 +138,23 @@ function connect(){
         d.players.forEach(p=>state.players.set(p.id,p));
         d.loot.forEach(l=>state.loot.set(l.id,l));
         rebuildSprites(); rebuildFightTags(); updatePlayersList();
-        // ensure we recenter now that we definitely have our own position
+        // Ensure tile chunks cover current view
         centerCameraNow();
         break;
 
       case 'PLAYER_JOINED': {
         state.players.set(d.id,d);
-        ensurePlayerSprite(d);            // <— draw immediately (even if it's me)
+        ensurePlayerSprite(d);
         updatePlayersList();
         if (d.id === state.me) centerCameraNow();
         break;
       }
 
       case 'PLAYER_MOVES':
-        // update server positions; if it's me, recenter (camera not smoothed)
         d.forEach(({id,x,y})=>{
           const p=state.players.get(id); if(!p) return;
-          const wasMe = (id===state.me); p.x=x; p.y=y;
+          const wasMe = (id===state.me);
+          p.x=x; p.y=y;
           if (wasMe) centerCameraNow();
         });
         break;
@@ -186,9 +210,11 @@ function connect(){
   ws.onclose=()=>logChat('[WS] closed');
 }
 
-// Sprites
+/* ==============================
+   SPRITES
+============================== */
 function rebuildSprites(){
-  for (const s of state.sprites.values()) { if(s.tagEl) s.tagEl.remove(); world.removeChild(s.g); }
+  for (const s of state.sprites.values()) { if(s.tagEl){ s.tagEl.remove(); } world.removeChild(s.g); }
   state.sprites.clear();
   for (const p of state.players.values()) ensurePlayerSprite(p);
   for (const l of state.loot.values()) ensureLootSprite(l);
@@ -233,7 +259,9 @@ function updatePlayersList(){
   playersList.textContent=rows.join('\n');
 }
 
-// Chat
+/* ==============================
+   CHAT
+============================== */
 chatInput.addEventListener('keydown', (e)=>{
   if(e.key==='Enter'){
     const text=chatInput.value.trim();
@@ -242,7 +270,9 @@ chatInput.addEventListener('keydown', (e)=>{
   }
 });
 
-// 50ms movement intent
+/* ==============================
+   MOVEMENT INTENT (50ms)
+============================== */
 setInterval(()=>{
   const me=state.me && state.players.get(state.me);
   if(!me || !state.moveTarget) return;
@@ -251,22 +281,27 @@ setInterval(()=>{
   send('MOVE_DIR', { dx: dx/dist, dy: dy/dist });
 }, 50);
 
-// WS send helper
+/* ==============================
+   WS SEND HELPER
+============================== */
 function send(op,d={}){ if(state.ws && state.ws.readyState===1) state.ws.send(JSON.stringify({op,d})); }
 
-/* ---------- Camera (steady) + coords + sprite smoothing ---------- */
+/* ==============================
+   CAMERA (steady), COORDS, SMOOTHING
+============================== */
 function centerCameraNow(){
   const me=state.me && state.players.get(state.me);
   if(!me) return;
   world.x = (app.renderer.width/2) - me.x;
   world.y = (app.renderer.height/2) - me.y;
   drawGridAround(me.x, me.y);
+  tileRenderer.ensureChunks(me.x, me.y, app.renderer.width, app.renderer.height); // <-- ensure ground tiles exist
   const tileSize=state.constants?.TILE_SIZE||64;
   coordsEl.textContent=`x:${Math.floor(me.x/tileSize)}  y:${Math.floor(me.y/tileSize)}`;
   updatePlayersList();
 }
 
-// Smooth sprites every frame (camera not smoothed)
+// Smooth sprites (camera is not smoothed)
 let lastMs=performance.now();
 app.ticker.add(()=>{
   const now=performance.now(), dt=Math.max(0.001,(now-lastMs)/1000); lastMs=now;
@@ -276,8 +311,203 @@ app.ticker.add(()=>{
     s.visX += (p.x - s.visX)*alpha;
     s.visY += (p.y - s.visY)*alpha;
     s.g.x=s.visX; s.g.y=s.visY;
-    if(s.tagEl){ const sx=s.visX+world.x, sy=s.visY+world.y-24; s.tagEl.style.left=`${sx}px`; s.tagEl.style.top=`${sy}px`; }
+    if(s.tagEl){
+      const sx=s.visX+world.x, sy=s.visY+world.y-24;
+      s.tagEl.style.left=`${sx}px`; s.tagEl.style.top=`${sy}px`;
+    }
   }
 });
 
 window.addEventListener('resize', ()=> centerCameraNow());
+
+/* ==============================
+   CHUNKED TILEMAP RENDERER
+   - Procedural fallback (grass/dirt)
+   - Auto-uses tileset image if found: client/assets/tiles.png (grid of 64x64)
+============================== */
+const tileRenderer = (() => {
+  const chunks = new Map();      // "cx,cy" -> {sprite}
+  const chunkSizeTiles = 16;     // 16x16 tiles per chunk (1,024 tiles)
+  let tileSize = 64;
+  let worldTiles = 1000;
+  let tileset = null;            // {baseTexture, frames: PIXI.Texture[]} or null
+
+  function key(cx, cy){ return `${cx},${cy}`; }
+
+  function seededHash(x, y) {
+    // quick 2D hash => 0..1
+    let h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+    h = (h ^ (h >>> 13)) * 1274126177;
+    h = h ^ (h >>> 16);
+    return (h >>> 0) / 0xffffffff;
+  }
+
+  function tileTypeFor(tx, ty) {
+    // Simple biome-ish noise: grass vs dirt with soft-ish borders
+    const n = seededHash(Math.floor(tx/3), Math.floor(ty/3));
+    return n < 0.75 ? 'grass' : 'dirt';
+  }
+
+  // Procedural color swatches (slight per-tile variance)
+  function tileColor(type, tx, ty) {
+    const v = seededHash(tx, ty) * 0.15; // 15% variance
+    if (type === 'grass') {
+      const base = [0x2a, 0x7d, 0x3b]; // green-ish
+      return ((Math.min(255, base[0] + v*40) << 16) |
+              (Math.min(255, base[1] + v*40) << 8) |
+               Math.min(255, base[2] + v*20)) >>> 0;
+    } else { // dirt
+      const base = [0x7a, 0x5c, 0x3b]; // brown-ish
+      return ((Math.min(255, base[0] + v*30) << 16) |
+              (Math.min(255, base[1] + v*25) << 8) |
+               Math.min(255, base[2] + v*20)) >>> 0;
+    }
+  }
+
+  async function maybeLoadTileset() {
+    // If client/assets/tiles.png exists and is same tileSize grid, use it
+    try {
+      const url = './assets/tiles.png';
+      const tex = await PIXI.Assets.load(url);
+      if (!tex) return null;
+      const base = tex.baseTexture ?? tex;
+      const frames = [];
+      const cols = Math.floor(base.width / tileSize);
+      const rows = Math.floor(base.height / tileSize);
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const frame = new PIXI.Texture({
+            source: base.resource ?? base,
+            frame: new PIXI.Rectangle(x*tileSize, y*tileSize, tileSize, tileSize)
+          });
+          frames.push(frame);
+        }
+      }
+      if (frames.length) return { baseTexture: base, frames };
+      return null;
+    } catch {
+      return null; // no image; stick to procedural
+    }
+  }
+
+  function drawChunkProcedural(cx, cy) {
+    const gfx = new PIXI.Graphics();
+    const originX = cx * chunkSizeTiles * tileSize;
+    const originY = cy * chunkSizeTiles * tileSize;
+
+    for (let ty = 0; ty < chunkSizeTiles; ty++) {
+      for (let tx = 0; tx < chunkSizeTiles; tx++) {
+        const wx = originX + tx * tileSize;
+        const wy = originY + ty * tileSize;
+        const tX = cx * chunkSizeTiles + tx;
+        const tY = cy * chunkSizeTiles + ty;
+        if (tX < 0 || tY < 0 || tX >= worldTiles || tY >= worldTiles) continue;
+
+        const type = tileTypeFor(tX, tY);
+        const col = tileColor(type, tX, tY);
+        gfx.rect(wx, wy, tileSize, tileSize).fill(col);
+      }
+    }
+    // Flatten to texture for perf
+    const tex = app.renderer.generateTexture(gfx);
+    gfx.destroy();
+    const spr = new PIXI.Sprite(tex);
+    spr.x = originX; spr.y = originY;
+    return spr;
+  }
+
+  function drawChunkFromTileset(cx, cy) {
+    // For each tile, choose a random frame (or map by type later)
+    const container = new PIXI.Container();
+    const originX = cx * chunkSizeTiles * tileSize;
+    const originY = cy * chunkSizeTiles * tileSize;
+
+    for (let ty = 0; ty < chunkSizeTiles; ty++) {
+      for (let tx = 0; tx < chunkSizeTiles; tx++) {
+        const tX = cx * chunkSizeTiles + tx;
+        const tY = cy * chunkSizeTiles + ty;
+        if (tX < 0 || tY < 0 || tX >= worldTiles || tY >= worldTiles) continue;
+        const type = tileTypeFor(tX, tY);
+        // Choose frame by type: first half grass, second half dirt (simple convention)
+        const frames = tileset.frames;
+        const mid = Math.floor(frames.length / 2) || 1;
+        const frameIndex = (type === 'grass')
+          ? Math.floor(seededHash(tX, tY) * Math.max(1, mid))
+          : mid + Math.floor(seededHash(tX+17, tY+23) * Math.max(1, frames.length - mid));
+        const tex = frames[Math.min(frames.length - 1, Math.max(0, frameIndex))];
+
+        const spr = new PIXI.Sprite(tex);
+        spr.x = originX + tx * tileSize;
+        spr.y = originY + ty * tileSize;
+        container.addChild(spr);
+      }
+    }
+    // Flatten for perf
+    const tex = app.renderer.generateTexture(container);
+    container.destroy({ children: true });
+    const spr = new PIXI.Sprite(tex);
+    spr.x = originX; spr.y = originY;
+    return spr;
+  }
+
+  function ensureChunk(cx, cy) {
+    const k = key(cx, cy);
+    if (chunks.has(k)) return;
+    const sprite = tileset ? drawChunkFromTileset(cx, cy) : drawChunkProcedural(cx, cy);
+    chunks.set(k, { sprite });
+    groundLayer.addChild(sprite);
+  }
+
+  function cullChunks(viewRect) {
+    // Remove far-away chunks to keep memory usage in check
+    for (const [k, obj] of chunks) {
+      const [cx, cy] = k.split(',').map(Number);
+      const x = cx * chunkSizeTiles * tileSize;
+      const y = cy * chunkSizeTiles * tileSize;
+      const w = chunkSizeTiles * tileSize;
+      const h = chunkSizeTiles * tileSize;
+
+      // Inflate view rect a bit to reduce churn
+      const margin = w * 1.5;
+      const inView = !(x + w < viewRect.x - margin ||
+                       x > viewRect.x + viewRect.w + margin ||
+                       y + h < viewRect.y - margin ||
+                       y > viewRect.y + viewRect.h + margin);
+      if (!inView) {
+        groundLayer.removeChild(obj.sprite);
+        obj.sprite.destroy();
+        chunks.delete(k);
+      }
+    }
+  }
+
+  return {
+    async init({ tileSize: ts, worldTiles: wt }) {
+      tileSize = ts; worldTiles = wt;
+      tileset = await maybeLoadTileset(); // null if not present
+    },
+    ensureChunks(centerX, centerY, viewW, viewH) {
+      const halfW = Math.ceil(viewW / 2);
+      const halfH = Math.ceil(viewH / 2);
+      const minX = centerX - halfW;
+      const minY = centerY - halfH;
+      const maxX = centerX + halfW;
+      const maxY = centerY + halfH;
+
+      const chunkPx = chunkSizeTiles * tileSize;
+      const cx0 = Math.floor(minX / chunkPx) - 1;
+      const cy0 = Math.floor(minY / chunkPx) - 1;
+      const cx1 = Math.floor(maxX / chunkPx) + 1;
+      const cy1 = Math.floor(maxY / chunkPx) + 1;
+
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cx = cx0; cx <= cx1; cx++) {
+          if (cx < 0 || cy < 0 || cx * chunkSizeTiles >= worldTiles || cy * chunkSizeTiles >= worldTiles) continue;
+          ensureChunk(cx, cy);
+        }
+      }
+
+      cullChunks({ x: minX, y: minY, w: viewW, h: viewH });
+    }
+  };
+})();
